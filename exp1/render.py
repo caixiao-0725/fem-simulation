@@ -4,7 +4,7 @@ from OpenGL.GLU import *
 
 import trimesh
 
-mesh_path = '../assets/objs/cube.obj'
+mesh_path = '../assets/objs/dragon.obj'
 mesh = trimesh.load_mesh(mesh_path)
 vertices = mesh.vertices
 edge = mesh.edges
