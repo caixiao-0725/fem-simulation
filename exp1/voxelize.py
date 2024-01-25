@@ -2,7 +2,7 @@
 import pyvista as pv
 import numpy as np
 # Load mesh and texture into PyVista
-mesh_path = '../assets/objs/dragon.obj'
+mesh_path = 'assets/objs/dragon.obj'
 mesh = pv.read(mesh_path)
 
 # Initialize the plotter object with four sub plots

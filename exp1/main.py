@@ -11,9 +11,9 @@ N = 0
 N_edges = 0
 N_hexagons = 0
 
-mesh_path = '../assets/objs/dragon.obj'
+mesh_path = 'assets/objs/dragon.obj'
 mesh = pv.read(mesh_path)
-voxels = pv.voxelize(mesh, density=0.1, check_surface=False)
+voxels = pv.voxelize(mesh, density=0.3, check_surface=False)
 
 N = voxels.points.shape[0]
 

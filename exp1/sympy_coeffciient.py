@@ -1,6 +1,6 @@
 import sympy as sp
 import time
-
+import pickle
 #插值系数
 alpha = sp.Symbol('alpha')
 beta = sp.Symbol('beta')
@@ -51,11 +51,14 @@ W = la/2*sp.trace(G)**2 + mu*sp.trace(G*G)
 
 #integration
 start_time =time.time()
-
+print("start")
 W_integrate = sp.integrate(W, (alpha, 0, 1), (beta, 0, 1), (gamma, 0, 1))
 
 end_time = time.time()
 execution_time = end_time - start_time
 print("积分时间：", execution_time, "秒")
 
-print(W_integrate)
+# 保存表达式到文件
+with open('exp1/expression.pkl', 'wb') as file:
+    pickle.dump(W_integrate, file)
+#print(W_integrate)
