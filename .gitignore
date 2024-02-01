@@ -2,6 +2,6 @@ rubbish/
 
 exp1/test.py
 
-.vscode
+**/.vscode
 
-_pycache_
+**/__pycache__

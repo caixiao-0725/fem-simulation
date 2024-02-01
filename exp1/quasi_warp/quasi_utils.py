@@ -45,9 +45,26 @@ def prepare(x,N_hexagons,hexagons,shapeFuncGrad,det_pX_peps,inverse_pX_peps):
 wp.init()
 wp.set_device('cuda:0')
 
+@wp.kernel()
+def prepare_kernal(x:wp.array(dtype=wp.vec3),hexagons:wp.array(dtype=wp.int32,ndim=2),shapeFuncGrad:wp.array(dtype=wp.float32,ndim=3),
+                    det_pX_peps:wp.array(dtype=wp.float32,ndim=2),inverse_pX_peps:wp.array(dtype=wp.mat33f,ndim=2)):
+    idx = wp.tid()
+    hex = idx//8
+    whichQuadrature = idx%8
+    F = wp.mat33f()
+    for row in range(3):
+        for col in range(3):
+            value_now = 0.0
+            for i in range(2):
+                for j in range(2):
+                    for k in range(2):
+                        value_now += x[hexagons[hex][i*4+j*2+k]][row]*shapeFuncGrad[i*4+j*2+k][whichQuadrature][col]
+            F[row,col] = value_now
+    det_pX_peps[hex][whichQuadrature] = wp.determinant(F)
+    inverse_pX_peps[hex][whichQuadrature] = wp.inverse(F)
 
 @wp.kernel()
-def compute_elastic_energy(x:wp.array(dtype=wp.vec3),F:wp.array(dtype=wp.float32,ndim=3),A:wp.array(dtype=wp.float32,ndim=3),E:wp.array(dtype=wp.float32,ndim=3),
+def compute_elastic_energy(x:wp.array(dtype=wp.vec3),
                    hexagons:wp.array(dtype=wp.int32,ndim=2),shapeFuncGrad:wp.array(dtype=wp.float32,ndim=3),
                    det_pX_peps:wp.array(dtype=wp.float32,ndim=2),inverse_pX_peps:wp.array(dtype=wp.mat33f,ndim=2),
                    IM:wp.array(dtype=wp.mat33f),LameMu:wp.array(dtype=wp.float32),LameLa:wp.array(dtype=wp.float32),
@@ -124,6 +141,7 @@ def qSim(mesh_path,dx,pinList):
 
     # init once and for all
     # voxelize
+    
     mesh = pv.read(mesh_path)
     voxels = pv.voxelize(mesh, density=dx, check_surface=False)
     hex = []
@@ -131,7 +149,7 @@ def qSim(mesh_path,dx,pinList):
     for cell in voxels.cell:
         hex.append([cell.point_ids[0],cell.point_ids[4],cell.point_ids[3],cell.point_ids[7],cell.point_ids[1],cell.point_ids[5],cell.point_ids[2],cell.point_ids[6]])
     N_hexagons = len(hex)
-
+    print('Num of hexagons : ',N_hexagons)
     # simulation components
     x = torch.tensor(voxels.points,dtype=torch.float32,requires_grad=True)
 
@@ -173,61 +191,59 @@ def qSim(mesh_path,dx,pinList):
     calShapeFuncGrad(shapeFuncGrad,help,quadrature)
 
     #for general hex,we need patial X/patial epsilon on the 8 quadrature points . Often we use the inverse of the matrix,so we save the inverse.
-    inverse_pX_peps = torch.zeros((N_hexagons,8,3,3),dtype=torch.float32)
-    det_pX_peps = torch.zeros((N_hexagons,8),dtype=torch.float32)
     IM = torch.eye(3,dtype=torch.float32)
-
-    prepare(x,N_hexagons,hexagons,shapeFuncGrad,det_pX_peps,inverse_pX_peps)
 
     x_cpu = wp.from_torch(x,dtype=wp.vec3)
     x_gpu = wp.zeros_like(x_cpu,device='cuda:0',requires_grad=True)
     wp.copy(x_gpu,x_cpu)
 
-    inverse_pX_peps_torch_gpu = inverse_pX_peps.to('cuda:0')
-    det_pX_peps_torch_gpu = det_pX_peps.to('cuda:0')
     IM_torch_gpu = IM.to('cuda:0')
     hexagons_torch_gpu = hexagons.to('cuda:0')
     shapeFuncGrad_torch_gpu = shapeFuncGrad.to('cuda:0')
     pin_pos = pin_pos.to('cuda:0')
     pin_list = pin_list.to('cuda:0')
 
-    inverse_pX_peps_gpu = wp.from_torch(inverse_pX_peps_torch_gpu,dtype=wp.mat33f)
-    det_pX_peps_gpu = wp.from_torch(det_pX_peps_torch_gpu)
+
     IM_gpu = wp.from_torch(IM_torch_gpu,dtype=wp.mat33f)
     hexagons_gpu = wp.from_torch(hexagons_torch_gpu)
     shapeFuncGrad_gpu = wp.from_torch(shapeFuncGrad_torch_gpu)
     pin_pos_gpu = wp.from_torch(pin_pos,dtype=wp.vec3)
     pin_list_gpu = wp.from_torch(pin_list)
+    
+
 
     # physical quantities
     LameMu_gpu = wp.array([3e6],dtype=wp.float32,requires_grad=False,device='cuda:0')
     LameLa_gpu = wp.array([0.0],dtype=wp.float32,requires_grad=False,device='cuda:0')
     m_gpu = wp.array([1.0],dtype=wp.float32,requires_grad=False,device='cuda:0')
     g_gpu = wp.array([-9.8],dtype=wp.float32,requires_grad=False,device='cuda:0')
-    F_gpu = wp.array(shape=(N_hexagons*8,3,3),dtype=wp.float32,requires_grad=False,device='cuda:0')
-    cacheA_gpu = wp.array(shape=(N_hexagons*8,3,3),dtype=wp.float32,requires_grad=False,device='cuda:0')
-    cacheB_gpu = wp.array(shape=(N_hexagons*8,3,3),dtype=wp.float32,requires_grad=False,device='cuda:0')
 
     loss = wp.zeros((1),dtype=wp.float32,requires_grad=True,device='cuda:0')
+
+    inverse_pX_peps_gpu = wp.array(shape = (N_hexagons,8),dtype=wp.mat33f)
+    det_pX_peps_gpu = wp.array(shape = (N_hexagons,8),dtype=wp.float32)
+
+    wp.launch(kernel=prepare_kernal,dim=N_hexagons*8,inputs=[x_gpu,hexagons_gpu,shapeFuncGrad_gpu,det_pX_peps_gpu,inverse_pX_peps_gpu])
+
     tape = wp.Tape()
     with tape:
         wp.launch(kernel=compute_gravity_energy,dim=N,inputs=[x_gpu,m_gpu,g_gpu,loss])
-        wp.launch(kernel=compute_elastic_energy,dim=N_hexagons*8,inputs=[x_gpu,F_gpu,cacheA_gpu,cacheB_gpu,hexagons_gpu,shapeFuncGrad_gpu,det_pX_peps_gpu,inverse_pX_peps_gpu,IM_gpu,LameMu_gpu,LameLa_gpu,loss])
+        wp.launch(kernel=compute_elastic_energy,dim=N_hexagons*8,inputs=[x_gpu,hexagons_gpu,shapeFuncGrad_gpu,det_pX_peps_gpu,inverse_pX_peps_gpu,IM_gpu,LameMu_gpu,LameLa_gpu,loss])
         
     optimizer = torch.optim.Adam([wp.to_torch(x_gpu)], lr=1e-3)
     plot_x = []
     plot_y = []
     tape.zero()
-    for step in range(64000):
+    for step in range(20000):
         tape.zero()
         tape.backward(loss)
         optimizer.step()
         wp.launch(kernel=pin,dim=len(pinList),inputs=[x_gpu,pin_pos_gpu,pin_list_gpu])
         loss.zero_()
         wp.launch(kernel=compute_gravity_energy,dim=N,inputs=[x_gpu,m_gpu,g_gpu,loss])
-        wp.launch(kernel=compute_elastic_energy,dim=N_hexagons*8,inputs=[x_gpu,F_gpu,cacheA_gpu,cacheB_gpu,hexagons_gpu,shapeFuncGrad_gpu,det_pX_peps_gpu,inverse_pX_peps_gpu,IM_gpu,LameMu_gpu,LameLa_gpu,loss])
+        wp.launch(kernel=compute_elastic_energy,dim=N_hexagons*8,inputs=[x_gpu,hexagons_gpu,shapeFuncGrad_gpu,det_pX_peps_gpu,inverse_pX_peps_gpu,IM_gpu,LameMu_gpu,LameLa_gpu,loss])
 
-        if step % 1000 == 0 and step != 0:
+        if step % 500 == 0 and step != 0:
             print('step {}: f(x)={}'.format(step,loss.numpy()[0]))
             plot_x.append(step)
             plot_y.append(loss.numpy()[0])
