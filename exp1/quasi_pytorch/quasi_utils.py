@@ -59,16 +59,13 @@ def compute_energy(x,N,N_hexagons,hexagons,shapeFuncGrad,det_pX_peps,inverse_pX_
                             F[row][col] = value_now
                     F = F @ inverse_pX_peps[hex][count_quadrature]
                     E = 0.5*(F.transpose(0,1)@F-IM)
-                   
                     Psi = torch.sum(torch.square(E))*LameMu + 0.5*LameLa*E.trace()*E.trace()
-                   
                     if first:
                         energy = Psi*det_pX_peps[hex,count_quadrature]
                         first = False
                     else:
                         energy = energy + Psi*det_pX_peps[hex,count_quadrature]     
                     count_quadrature+=1
-    
     for i in range(N):
         energy = energy -m*g*x[i][1] 
     return energy
@@ -141,13 +138,14 @@ def qSim(mesh_path,dx,pinList):
 
     prepare(x,N_hexagons,hexagons,shapeFuncGrad,det_pX_peps,inverse_pX_peps)
 
-    optimizer = torch.optim.Adam([x], lr=5e-3)
+    optimizer = torch.optim.Adam([x], lr=1e-3)
     plot_x = []
     plot_y = []
     for step in range(1000):
         energy = compute_energy(x,N,N_hexagons,hexagons,shapeFuncGrad,det_pX_peps,inverse_pX_peps,IM,LameMu,LameLa,m,g)
         optimizer.zero_grad()
         energy.backward()
+        #print(x.grad)
         optimizer.step()
         with torch.no_grad():
             for i in range(len(pinList)):

@@ -1,3 +1,7 @@
 rubbish/
 
 exp1/test.py
+
+.vscode
+
+_pycache_
