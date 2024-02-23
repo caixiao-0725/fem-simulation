@@ -85,9 +85,9 @@ def jacobi_iteration_offset(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.m
     #     print(x[idx])
 
 @wp.kernel
-def jacobi_iteration(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat33f),b:wp.array(dtype=wp.vec3f)):
+def jacobi_iteration(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat33f),b:wp.array(dtype=wp.vec3f),offset:int):
     idx = wp.tid()
-    diag = value[idx]
+    diag = value[idx+offset]
     x[idx] = solve3x3(diag,b[idx],x[idx])
     # if idx == 0:
     #     print(diag)
@@ -105,36 +105,9 @@ def spd_matrix33f(x:wp.array(dtype=wp.mat33f)):
     x[idx] = wp.mul(V,wp.mul(wp.diag(D),wp.transpose(V)))
 
 @wp.kernel
-def Colored_GS_MF_Kernel(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat33f),b:wp.array(dtype=wp.vec3f),base:wp.int32,number:wp.int32):
+def Colored_GS_MF_Kernel(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat33f),b:wp.array(dtype=wp.vec3f),base:wp.int32,number:wp.int32,diag_offset:int):
     idx = wp.tid()
     if idx>=number: 
         return
     t = base+idx
-    x[t] = solve3x3(value[t],b[t],x[t])
-
-
-@wp.kernel()
-def compute_partial_elastic_energy_X(x:wp.array(dtype=wp.vec3),hexagons:wp.array(dtype=wp.int32,ndim=2),vertex2index:wp.array(dtype=wp.int32),
-                shapeFuncGrad:wp.array(dtype=wp.float32,ndim=3),det_pX_peps:wp.array(dtype=wp.float32,ndim=2),inverse_pX_peps:wp.array(dtype=wp.mat33f,ndim=2),
-                IM:wp.array(dtype=wp.mat33f),LameMu:wp.array(dtype=wp.float32),LameLa:wp.array(dtype=wp.float32),
-                grad:wp.array(dtype=wp.vec3)):
-    idx = wp.tid()
-    whichQuadrature = idx%8
-    hex = idx//8
-    F = wp.mat33f()
-    for row in range(3):
-        for col in range(3):
-            value_now = 0.0
-            for i in range(8):
-                value_now += x[hexagons[hex][i]][row]*shapeFuncGrad[i][whichQuadrature][col]
-            F[row,col] = value_now
-    F = F @ inverse_pX_peps[hex][whichQuadrature]
-    
-    E = 0.5*(wp.transpose(F)@F-IM[0])
-    P = F@(2.0*LameMu[0]*E+LameLa[0]*wp.trace(E)*IM[0])
-    for i in range(8):
-        shapeFuncGradNow = wp.vec3f()
-        for j in range(3):
-            shapeFuncGradNow[j] = shapeFuncGrad[i][whichQuadrature][j]
-        temAns = wp.mul(P@wp.transpose(inverse_pX_peps[hex][whichQuadrature]),shapeFuncGradNow)*det_pX_peps[hex][whichQuadrature]
-        wp.atomic_add(grad,vertex2index[hexagons[hex][i]],temAns)
+    x[t] = solve3x3(value[t+diag_offset],b[t],x[t])
