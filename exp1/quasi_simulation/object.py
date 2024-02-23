@@ -260,8 +260,8 @@ class Object:
             while(p_base_u<self.color_num-1):
                 p_base_u+=1
                 self.MF_GS_U_Ptr[p_base_u] = i_u
-            for i in range(self.color_num+1):
-                print( self.color_vertex_num[i],self.MF_GS_L_Ptr[i],self.MF_GS_U_Ptr[i])
+            # for i in range(self.color_num+1):
+            #     print( self.color_vertex_num[i],self.MF_GS_L_Ptr[i],self.MF_GS_U_Ptr[i])
             self.MF_D_row_gpu = wp.from_torch(self.MF_D_row.to('cuda:0'),dtype=wp.int32)
             self.MF_D_col_gpu = wp.from_torch(self.MF_D_col.to('cuda:0'),dtype=wp.int32)
             self.MF_L_row_gpu = wp.from_torch(self.MF_L_row.to('cuda:0'),dtype=wp.int32)
@@ -419,11 +419,12 @@ class Object:
     #             print('iter :',iter,' Energy : ',self.energy.numpy()[0])
 
     def PerformJacobi(self,iterations = 10):
-        #self.X.zero_()
+        self.X.zero_()
         for iter in range(iterations):
             wp.copy(self.dev_temp_X,self.grad_gpu)
-            #bsr_mv(self.L,self.X,self.dev_temp_X,alpha=-1.0,beta=1.0)
-            #bsr_mv(self.U,self.X,self.dev_temp_X,alpha=-1.0,beta=1.0)
+            bsr_mv(self.L,self.X,self.dev_temp_X,alpha=-1.0,beta=1.0)
+            bsr_mv(self.U,self.X,self.dev_temp_X,alpha=-1.0,beta=1.0)
+            self.X.zero_()
             wp.launch(kernel=jacobi_iteration,dim=self.N_verts,inputs=[self.X,self.MF_value_gpu,self.dev_temp_X,self.off_d])
 
 
@@ -461,6 +462,7 @@ class Object:
         self.squared_sum.zero_()
         wp.launch(kernel=square_sum,dim=self.N_verts,inputs=[self.dev_temp_X,self.squared_sum])
         print('after solve  squared_sum : ',self.squared_sum.numpy()[0])
+
     def Newton(self,iterations = 10000):
         for step in range(iterations):
             if step%(iterations/10) == 0:
@@ -482,9 +484,9 @@ class Object:
             if self.store_LDU == 0:
                 wp.launch(kernel=jacobi_iteration_offset,dim=self.N_verts,inputs=[self.X,self.MF_value_gpu,self.diag_offset_gpu,self.grad_gpu])
             else:
-                #self.PerformJacobi(1)
+                #self.PerformJacobi(5)
                 self.PerformGaussSeidel(3)
-
+            #self.showError()
             wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.x_gpu,self.X,self.dev_index2vertex])
             wp.launch(kernel=pin,dim=self.N_pin,inputs=[self.x_gpu,self.pin_pos_gpu,self.pin_list_gpu])
 
