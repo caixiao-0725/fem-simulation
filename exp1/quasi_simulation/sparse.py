@@ -497,6 +497,7 @@ def bsr_set_diag(
         A.ncol = cols_of_blocks
 
     A.nnz = min(A.nrow, A.ncol)
+    #print(A.nnz)
     _bsr_ensure_fits(A)
 
     if warp.types.is_array(diag):
@@ -1258,3 +1259,13 @@ def bsr_mv(
     )
 
     return y
+
+def bsr_mmm(Ut :BsrMatrix[BlockType[Any, Rows , Scalar]],
+            A :BsrMatrix[BlockType[Rows, Cols, Scalar]],
+            U :BsrMatrix[BlockType[Cols, Any, Scalar]],
+            mmm_rows:"Array[int]",
+            mmm_cols:"Array[int]",
+            mmm_values:"Array[Union[Scalar, BlockType[Rows, Cols, Scalar]]]",):
+    #我们可以先算一下Ut*A
+    UA = bsr_mm(Ut,A)
+    #然后再算一下(Ut*A)*U

@@ -90,7 +90,7 @@ def jacobi_iteration(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat33f),
     diag = value[idx+offset]
     x[idx] = solve3x3(diag,b[idx],x[idx])
     # if idx == 0:
-    #     print(diag)
+    #      print(diag)
 
 @wp.kernel
 def spd_matrix33f(x:wp.array(dtype=wp.mat33f)):
@@ -111,3 +111,9 @@ def Colored_GS_MF_Kernel(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat3
         return
     t = base+idx
     x[t] = solve3x3(value[t+diag_offset],b[t],x[t])
+
+@wp.kernel
+def block_values_reorder(A_init:wp.array(dtype=wp.mat33f),A:wp.array(dtype=wp.mat33f),index:wp.array(dtype=wp.int32)):
+    idx = wp.tid()
+    i = index[idx]
+    A[idx] = A_init[i]

@@ -9,10 +9,10 @@ def calShapeFuncGrad(shapeFuncGrad,help,quadrature):
 
 
 def ijk_index(point, origin, spacing):
-    return ((point - origin) / spacing).int().tolist()
+    return ((point - origin) / spacing+torch.tensor([0.1,0.1,0.1])).int().tolist()
 
 def color_ind(point, origin, spacing):
-    temp = ((point - origin) / spacing + +torch.tensor([0.5,0.5,0.5])).int()
+    temp = ((point - origin) / spacing +torch.tensor([0.5,0.5,0.5])).int()
     temp[0] = temp[0] % 2
     temp[1] = temp[1] % 2
     temp[2] = temp[2] % 2
