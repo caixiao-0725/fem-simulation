@@ -124,9 +124,44 @@ def scal(x:wp.array(dtype=wp.vec3f),a:wp.float32):
     x[idx] = x[idx]*a
 
 @wp.kernel
+def scal_(x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),a:wp.float32):
+    idx = wp.tid()   
+    y[idx] = x[idx]*a
+
+
+@wp.kernel
 def axpy(y:wp.array(dtype=wp.vec3f),x:wp.array(dtype=wp.vec3f),a:wp.float32):
     idx = wp.tid()
     y[idx] = y[idx]+a*x[idx]
+
+'''
+下面的函数是adam用的
+'''
+@wp.kernel
+def updateM(x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),a:wp.float32,b:wp.float32):
+    idx = wp.tid()
+    y[idx] = a*x[idx]+b*y[idx]
+
+
+@wp.kernel
+def updateV(x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),a:wp.float32,b:wp.float32):
+    idx = wp.tid()
+    y[idx] = a*wp.cw_mul(x[idx],x[idx])+b*y[idx]
+
+
+
+@wp.kernel
+def updateX(x:wp.array(dtype=wp.vec3f),m:wp.array(dtype=wp.vec3f),v:wp.array(dtype=wp.vec3f),lr:wp.float32,epsilon:wp.float32):
+    idx = wp.tid()
+    temp_v = v[idx]
+    temp_m = m[idx]
+    ans = wp.vec3f()
+
+    for i in range(3):
+        ans[i] = temp_m[i]/(wp.sqrt(temp_v[i])+epsilon)
+    x[idx] -= lr*ans
+    
+    
 
 @wp.kernel
 def cublasSdot(x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),res:wp.array(dtype=wp.float32)):

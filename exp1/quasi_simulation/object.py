@@ -566,6 +566,7 @@ class Object:
         self.det_pX_peps_gpu = wp.array(shape = (self.N_hexagons,8),dtype=wp.float32)
 
         wp.launch(kernel=prepare_kernal,dim=self.N_hexagons*8,inputs=[self.x_gpu,self.hexagons_gpu,self.shapeFuncGrad_gpu,self.det_pX_peps_gpu,self.inverse_pX_peps_gpu])
+        # 矩阵 A = L + U + D
         self.A = [bsr_zeros(self.dims[i],self.dims[i],wp.mat33f,device='cuda:0') for i in range(self.layer)]
         self.L = [bsr_zeros(self.dims[i],self.dims[i],wp.mat33f,device='cuda:0') for i in range(self.layer)]
         self.U = [bsr_zeros(self.dims[i],self.dims[i],wp.mat33f,device='cuda:0') for i in range(self.layer)]
@@ -582,6 +583,11 @@ class Object:
         self.dev_B_fixed = [wp.zeros((self.dims[i]),dtype=wp.vec3,device='cuda:0') for i in range(self.layer)]
         self.dev_delta_x = [wp.zeros((self.dims[i]),dtype=wp.vec3,device='cuda:0') for i in range(self.layer)]
         self.dev_x_solved = [wp.zeros((self.dims[i]),dtype=wp.vec3,device='cuda:0') for i in range(self.layer)]
+        #adam的系数
+        self.m = wp.zeros((self.N_verts),dtype=wp.vec3,device='cuda:0')
+        self.v = wp.zeros((self.N_verts),dtype=wp.vec3,device='cuda:0')
+        self.m_hat = wp.zeros((self.N_verts),dtype=wp.vec3,device='cuda:0')
+        self.v_hat = wp.zeros((self.N_verts),dtype=wp.vec3,device='cuda:0')
 
         self.MF_value_gpu = wp.zeros(shape=(self.MF_nnz),dtype=wp.mat33f,device='cuda:0')
         self.dev_temp_X = wp.zeros(shape=(self.N_verts),dtype=wp.vec3,device='cuda:0')
@@ -646,6 +652,7 @@ class Object:
     #         wp.synchronize()
     #         if iter%(iterations/100) == 0:
     #             print('iter :',iter,' Energy : ',self.energy.numpy()[0])
+
 
     def PerformJacobi(self,layer = 0,iterations = 2):
         self.dev_delta_x[layer].zero_()
@@ -789,6 +796,35 @@ class Object:
         print('after solve  squared_sum : ',self.squared_sum.numpy()[0])
         # if layer == 2:
         #     print(self.dev_delta_x[layer])
+
+    def Adam(self,iterations = 1000,lr = 1e-3,beta1 = 0.9,beta2 = 0.999,epsilon = 1e-8):
+        '''
+        Adam optimization algorithm
+        只用一阶项求解非线性方程组
+        '''
+        self.m.zero_()
+        self.v.zero_()
+        for step in range(iterations+1):
+            if step%(iterations/10) == 0:
+            #if True:
+                wp.synchronize()
+                print('Step : ',step)
+                self.energy.zero_()
+                wp.launch(kernel=compute_elastic_energy,dim=self.N_hexagons*8,inputs=[self.x_gpu,self.hexagons_gpu,self.shapeFuncGrad_gpu,self.det_pX_peps_gpu,self.inverse_pX_peps_gpu,self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.energy])
+                wp.launch(kernel=compute_gravity_energy,dim=self.N_verts,inputs=[self.x_gpu,self.m_gpu,self.g_gpu,self.energy])
+                print('Energy : ',self.energy.numpy()[0])
+                self.plot_x.append(step)
+                self.plot_y.append(self.energy.numpy()[0])
+            self.grad_gpu.zero_()
+            wp.launch(kernel=compute_partial_elastic_energy_X_noOrder,dim=self.N_hexagons*8,inputs=[self.x_gpu,self.hexagons_gpu,self.shapeFuncGrad_gpu,self.det_pX_peps_gpu,self.inverse_pX_peps_gpu,self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.grad_gpu])
+            wp.launch(kernel=compute_partial_gravity_energy_X,dim=self.N_verts,inputs=[self.m_gpu,self.g_gpu,self.grad_gpu])
+            wp.launch(kernel=updateM,dim=self.N_verts,inputs=[self.grad_gpu,self.m,(1-beta1),beta1])
+            wp.launch(kernel=updateV,dim=self.N_verts,inputs=[self.grad_gpu,self.v,(1-beta2),beta2])
+            wp.launch(kernel=scal_,dim = self.N_verts,inputs=[self.m,self.m_hat,1/(1-(beta1**(step+1)))])
+            wp.launch(kernel=scal_,dim = self.N_verts,inputs=[self.v,self.v_hat,1/(1-(beta2**(step+1)))])
+            wp.launch(kernel=updateX,dim=self.N_verts,inputs=[self.x_gpu,self.m_hat,self.v_hat,lr,epsilon])
+                  
+            wp.launch(kernel=pin,dim=self.N_pin,inputs=[self.x_gpu,self.pin_pos_gpu,self.pin_list_gpu])
 
     def Newton(self,iterations = 1000):
         for step in range(iterations):
