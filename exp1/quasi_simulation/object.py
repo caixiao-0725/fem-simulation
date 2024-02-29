@@ -10,7 +10,7 @@ import time
 import sys
 import operator
 import matplotlib.pyplot as plt
-
+EPSILON = 1e-7
 class Object: 
 
     def __init__(self,mesh_path,dx,pinList):
@@ -576,6 +576,8 @@ class Object:
         
         self.X = wp.zeros((self.N_verts),dtype=wp.vec3,device='cuda:0')
         self.dev_R = [wp.zeros((self.dims[i]),dtype=wp.vec3,device='cuda:0') for i in range(self.layer)]
+        self.dev_P = [wp.zeros((self.dims[i]),dtype=wp.vec3,device='cuda:0') for i in range(self.layer)]
+        self.dev_AP = [wp.zeros((self.dims[i]),dtype=wp.vec3,device='cuda:0') for i in range(self.layer)]
         self.dev_B = [wp.zeros((self.dims[i]),dtype=wp.vec3,device='cuda:0') for i in range(self.layer)]
         self.dev_B_fixed = [wp.zeros((self.dims[i]),dtype=wp.vec3,device='cuda:0') for i in range(self.layer)]
         self.dev_delta_x = [wp.zeros((self.dims[i]),dtype=wp.vec3,device='cuda:0') for i in range(self.layer)]
@@ -584,6 +586,7 @@ class Object:
         self.MF_value_gpu = wp.zeros(shape=(self.MF_nnz),dtype=wp.mat33f,device='cuda:0')
         self.dev_temp_X = wp.zeros(shape=(self.N_verts),dtype=wp.vec3,device='cuda:0')
         self.squared_sum = wp.zeros(shape=(1),dtype=wp.float32,device='cuda:0')
+        self.dot_sum = wp.zeros(shape=(1),dtype=wp.float32,device='cuda:0')
 
         self.UtAUs_D_row_gpu = [wp.from_torch(self.UtAUs_D_row[i].to('cuda:0'),dtype=wp.int32) for i in range(self.layer-1)]
         self.UtAUs_D_col_gpu = [wp.from_torch(self.UtAUs_D_col[i].to('cuda:0'),dtype=wp.int32) for i in range(self.layer-1)]
@@ -706,7 +709,48 @@ class Object:
                         bsr_set_from_triplets(self.UtAUs_GS_L[layer-1][color],nnz = self.UtAUs_GS_L_Ptr[layer-1][color+1]-self.UtAUs_GS_L_Ptr[layer-1][color],rows=self.UtAUs_GS_L_row_gpu[layer-1],columns=self.UtAUs_GS_L_col_gpu[layer-1],values=self.UtAUs_values[layer-1],row_offset=self.UtAUs_GS_L_Ptr[layer-1][color],col_offset=self.UtAUs_GS_L_Ptr[layer-1][color],value_offset=self.UtAUs_off_l[layer-1]+self.UtAUs_GS_L_Ptr[layer-1][color])
                         bsr_mv(self.UtAUs_GS_L[layer-1][color],self.dev_delta_x[layer],self.dev_B[layer],x_offset=0,y_offset=self.color_vertex_num[layer][color+1],alpha=-1.0,beta=1.0)
 
-
+    def PerformConjugateGradient(self,layer = 0,iterations = 10,tol = 1e-5):
+        self.dev_delta_x[layer].zero_()
+        r0 = 0.0
+        r1 = 0.0
+        dot = 0.0
+        alpha = 0.0
+        beta = 0.0
+        neg_alpha = 0.0
+        wp.copy(self.dev_B[layer],self.dev_B_fixed[layer])
+        self.squared_sum.zero_()
+        wp.launch(kernel = square_sum,dim=self.dims[layer],inputs=[self.dev_B[layer],self.squared_sum])
+        r1 = self.squared_sum.numpy()[0]
+        
+        if r1 < EPSILON:
+            return
+        r = r1
+        k = 1
+        while(r1>tol*r and k<=iterations):
+            if k > 1:
+                beta = r1/r0
+                wp.launch(scal,dim=self.dims[layer],inputs=[self.dev_P[layer],beta])
+                wp.launch(axpy,dim=self.dims[layer],inputs=[self.dev_B[layer],self.dev_P[layer],1.0])
+            else :
+                wp.copy(self.dev_P[layer],self.dev_B[layer])
+            bsr_mv(self.L[layer],self.dev_P[layer],self.dev_AP[layer],alpha=1.0,beta=0.0)
+            bsr_mv(self.U[layer],self.dev_P[layer],self.dev_AP[layer],alpha=1.0,beta=1.0)
+            bsr_mv(self.D[layer],self.dev_P[layer],self.dev_AP[layer],alpha=1.0,beta=1.0)
+            self.dot_sum.zero_()
+            wp.launch(kernel = cublasSdot,dim=self.dims[layer],inputs=[self.dev_P[layer],self.dev_AP[layer],self.dot_sum])
+            dot = self.dot_sum.numpy()[0]
+            if dot<EPSILON:
+                break
+            alpha = r1/dot
+            neg_alpha = -alpha
+            wp.launch(axpy,dim=self.dims[layer],inputs=[self.dev_delta_x[layer],self.dev_P[layer],alpha])
+            wp.launch(axpy,dim=self.dims[layer],inputs=[self.dev_B[layer],self.dev_AP[layer],neg_alpha])
+            r0 = r1
+            self.squared_sum.zero_()
+            wp.launch(kernel = square_sum,dim=self.dims[layer],inputs=[self.dev_B[layer],self.squared_sum])
+            r1 = self.squared_sum.numpy()[0]
+            
+            k+=1
 
     def downSample(self,layer = 0):
         wp.copy(self.dev_R[layer],self.dev_B_fixed[layer])
@@ -769,8 +813,9 @@ class Object:
 
             wp.copy(self.dev_B_fixed[0],self.grad_gpu)
             #self.PerformJacobi(layer=0,iterations=1)
-            self.PerformGaussSeidel(layer=0,iterations=3)
-
+            #self.PerformGaussSeidel(layer=0,iterations=3)
+            self.PerformConjugateGradient(layer=0,iterations=3)
+            
             #self.showError(0)
             wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.x_gpu,self.dev_delta_x[0],self.dev_index2vertex])
             wp.launch(kernel=pin,dim=self.N_pin,inputs=[self.x_gpu,self.pin_pos_gpu,self.pin_list_gpu])

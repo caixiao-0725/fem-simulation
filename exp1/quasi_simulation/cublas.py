@@ -117,3 +117,18 @@ def block_values_reorder(A_init:wp.array(dtype=wp.mat33f),A:wp.array(dtype=wp.ma
     idx = wp.tid()
     i = index[idx]
     A[idx] = A_init[i]
+
+@wp.kernel
+def scal(x:wp.array(dtype=wp.vec3f),a:wp.float32):
+    idx = wp.tid()
+    x[idx] = x[idx]*a
+
+@wp.kernel
+def axpy(y:wp.array(dtype=wp.vec3f),x:wp.array(dtype=wp.vec3f),a:wp.float32):
+    idx = wp.tid()
+    y[idx] = y[idx]+a*x[idx]
+
+@wp.kernel
+def cublasSdot(x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),res:wp.array(dtype=wp.float32)):
+    idx = wp.tid()
+    wp.atomic_add(res,0,wp.dot(x[idx],y[idx]))
