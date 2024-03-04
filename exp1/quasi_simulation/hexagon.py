@@ -17,6 +17,14 @@ def prepare_kernal(x:wp.array(dtype=wp.vec3),hexagons:wp.array(dtype=wp.int32,nd
     det_pX_peps[hex][whichQuadrature] = wp.determinant(F)
     inverse_pX_peps[hex][whichQuadrature] = wp.inverse(F)
 
+@wp.kernel
+def prepare_mass(vol:float,mass:wp.array(dtype=float),hex:wp.array(dtype=wp.int32,ndim=2)):
+    idx = wp.tid()
+    whichhex = idx//8
+    whichpoint = idx%8
+    id = hex[whichhex][whichpoint]
+    wp.atomic_add(mass,id,vol)
+
 @wp.kernel()
 def compute_elastic_energy(x:wp.array(dtype=wp.vec3),hexagons:wp.array(dtype=wp.int32,ndim=2),
                             shapeFuncGrad:wp.array(dtype=wp.float32,ndim=3), det_pX_peps:wp.array(dtype=wp.float32,ndim=2),inverse_pX_peps:wp.array(dtype=wp.mat33f,ndim=2),
@@ -47,9 +55,12 @@ def compute_elastic_energy(x:wp.array(dtype=wp.vec3),hexagons:wp.array(dtype=wp.
     wp.atomic_add(loss,0,energy) 
 
 @wp.kernel()
-def compute_gravity_energy(x:wp.array(dtype=wp.vec3),m:wp.array(dtype=wp.float32),g:wp.array(dtype=wp.float32),loss:wp.array(dtype=wp.float32)):
+def compute_gravity_energy(x:wp.array(dtype=wp.vec3),m:wp.array(dtype=wp.float32),g:wp.array(dtype=wp.float32),pin:wp.array(dtype=wp.int32),pin_pos:wp.array(dtype=wp.vec3),control_mag:float,loss:wp.array(dtype=wp.float32)):
     idx = wp.tid()
-    energy = -m[0]*g[0]*x[idx][1]
+    energy = -m[idx]*g[0]*x[idx][1]
+    if pin[idx] == 1:
+        delta_x = pin_pos[idx] - x[idx]
+        energy += 0.5*control_mag*wp.dot(delta_x,delta_x)
     wp.atomic_add(loss,0,energy)
 
 
@@ -94,11 +105,6 @@ def compute_elastic_hessian(x:wp.array(dtype=wp.vec3),hexagons:wp.array(dtype=wp
                 temAnsForHessian[j,i] = temAns[j]
         wp.atomic_add(MF_value,offset[hex*64+whichShapeFunc*8+ii],temAnsForHessian)
         
-
-@wp.kernel()
-def compute_partial_gravity_energy_X(m:wp.array(dtype=wp.float32),g:wp.array(dtype=wp.float32),grad:wp.array(dtype=wp.vec3)):
-    idx = wp.tid()
-    grad[idx][1] -= m[0]*g[0]
 
 @wp.kernel()
 def compute_partial_elastic_energy_X(x:wp.array(dtype=wp.vec3),hexagons:wp.array(dtype=wp.int32,ndim=2),vertex2index:wp.array(dtype=wp.int32),
@@ -152,16 +158,33 @@ def compute_partial_elastic_energy_X_noOrder(x:wp.array(dtype=wp.vec3),hexagons:
         temAns = wp.mul(P@wp.transpose(inverse_pX_peps[hex][whichQuadrature]),shapeFuncGradNow)*det_pX_peps[hex][whichQuadrature]
         wp.atomic_add(grad,hexagons[hex][i],temAns)
 
-@wp.kernel()
-def pin(x:wp.array(dtype=wp.vec3),pin_pos:wp.array(dtype=wp.vec3),pin_list:wp.array(dtype=wp.int32)):
-    idx = wp.tid()
-    x[pin_list[idx]] = pin_pos[idx]
+@wp.kernel
+def compute_partial_fixed_energy_X(x:wp.array(dtype=wp.vec3f),vertex2index:wp.array(dtype=wp.int32),pin_list:wp.array(dtype=wp.int32),grad:wp.array(dtype=wp.vec3f),fixed_x:wp.array(dtype=wp.vec3f),control_mag:wp.float32):
+    id = wp.tid()
+    idx = pin_list[id]
+    i = vertex2index[idx]
+    grad[i] -= control_mag * (fixed_x[id]-x[idx])
+
+@wp.kernel
+def compute_partial_fixed_energy_X_noOrder(x:wp.array(dtype=wp.vec3f),pin_list:wp.array(dtype=wp.int32),grad:wp.array(dtype=wp.vec3f),fixed_x:wp.array(dtype=wp.vec3f),control_mag:wp.float32):
+    id = wp.tid()
+    idx = pin_list[id]
+    grad[idx] -= control_mag * (fixed_x[id]-x[idx])
+
+
 
 @wp.kernel()
-def build_constraints(hexagons:wp.array(dtype=wp.int32,ndim=2),tet_update_offset:wp.array(dtype=wp.vec2i)):
+def compute_partial_gravity_energy_X(m:wp.array(dtype=wp.float32),g:wp.array(dtype=wp.float32),grad:wp.array(dtype=wp.vec3),index2vertex:wp.array(dtype=wp.int32)):
     idx = wp.tid()
-    for i in range(8):
-        for j in range(8):
-            tet_update_offset[idx*64+i*8+j][0] = hexagons[idx][i]
-            tet_update_offset[idx*64+i*8+j][1] = hexagons[idx][j]
+    id = index2vertex[idx]
+    grad[idx][1] -= m[id]*g[0]
 
+@wp.kernel()
+def compute_partial_gravity_energy_X_noOrder(m:wp.array(dtype=wp.float32),g:wp.array(dtype=wp.float32),grad:wp.array(dtype=wp.vec3)):
+    idx = wp.tid()
+    grad[idx][1] -= m[idx]*g[0]
+
+# @wp.kernel()
+# def pin(x:wp.array(dtype=wp.vec3),pin_pos:wp.array(dtype=wp.vec3),pin_list:wp.array(dtype=wp.int32)):
+#     idx = wp.tid()
+#     x[pin_list[idx]] = pin_pos[idx]

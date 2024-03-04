@@ -35,6 +35,20 @@ def square_sum(x:wp.array(dtype=wp.vec3),res:wp.array(dtype=wp.float32)):
     temp_res = wp.dot(x[idx],x[idx])
     wp.atomic_add(res,0,temp_res)
 
+@wp.kernel
+def Inf_norm(x:wp.array(dtype=wp.vec3),res:wp.array(dtype=wp.float32),index2vertex:wp.array(dtype=wp.int32),pinned:wp.array(dtype=wp.int32)):
+    idx = wp.tid()
+    # if pinned[index2vertex[idx]] == 1:
+    #     return
+    temp_x = x[idx]
+    temp_max = wp.abs(temp_x[2])
+    for i in range(2):
+        if wp.abs(temp_x[i])>temp_max:
+            temp_max = wp.abs(temp_x[i])
+    wp.atomic_max(res,0,temp_max)
+    
+
+
 #use conjugate gradient to solve Ax=b (A:3x3  b:3x1  x:3x1)
 @wp.func
 def solve3x3(A:wp.mat33f,b:wp.vec3f,x:wp.vec3f):
@@ -93,7 +107,7 @@ def jacobi_iteration(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat33f),
     #      print(diag)
 
 @wp.kernel
-def spd_matrix33f(x:wp.array(dtype=wp.mat33f)):
+def spd_matrix33f(x:wp.array(dtype=wp.mat33f),value:float):
     idx = wp.tid()
     A = x[idx]
     V = wp.mat33f()
@@ -101,7 +115,7 @@ def spd_matrix33f(x:wp.array(dtype=wp.mat33f)):
     wp.eig3(A,V,D)
     for i in range(3):
         if D[i] < 0:
-            D[i] = 0.001
+            D[i] = value
     x[idx] = wp.mul(V,wp.mul(wp.diag(D),wp.transpose(V)))
 
 @wp.kernel
