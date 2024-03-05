@@ -62,7 +62,7 @@ def solve3x3(A:wp.mat33f,b:wp.vec3f,x:wp.vec3f):
     beta = 0.0
     r = b
     r_norm = wp.dot(r,r)
-    if r_norm < 1e-6:
+    if r_norm < 1e-10:
         return x
     p = r
     for l in range(3):
@@ -72,14 +72,14 @@ def solve3x3(A:wp.mat33f,b:wp.vec3f,x:wp.vec3f):
         dot = wp.dot(p,Ap)
         if dot<0:
             print('not spd')
-        if dot < 1e-6:
+        if dot < 1e-10:
             return x
         alpha = r_norm/dot
         x = x+alpha*p
         r = r-alpha*Ap
         old_r_norm = r_norm
         r_norm = wp.dot(r,r)
-        if r_norm < 1e-6:
+        if r_norm < 1e-10:
             return x
         beta = r_norm/old_r_norm
         p = r+beta*p
@@ -117,6 +117,8 @@ def spd_matrix33f(x:wp.array(dtype=wp.mat33f),value:float):
         if D[i] < 0:
             D[i] = value
     x[idx] = wp.mul(V,wp.mul(wp.diag(D),wp.transpose(V)))
+    # if idx<3:
+    #     print(x[idx])
 
 @wp.kernel
 def Colored_GS_MF_Kernel(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat33f),b:wp.array(dtype=wp.vec3f),base:wp.int32,number:wp.int32,diag_offset:int):
