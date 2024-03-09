@@ -130,7 +130,7 @@ def compute_partial_elastic_energy_X(x:wp.array(dtype=wp.vec3),hexagons:wp.array
         for j in range(3):
             shapeFuncGradNow[j] = shapeFuncGrad[i][whichQuadrature][j]
         temAns = wp.mul(P@wp.transpose(inverse_pX_peps[hex][whichQuadrature]),shapeFuncGradNow)*det_pX_peps[hex][whichQuadrature]
-        wp.atomic_add(grad,vertex2index[hexagons[hex][i]],temAns)
+        wp.atomic_sub(grad,vertex2index[hexagons[hex][i]],temAns)
 
 @wp.kernel()
 def compute_partial_elastic_energy_X_noOrder(x:wp.array(dtype=wp.vec3),hexagons:wp.array(dtype=wp.int32,ndim=2),
@@ -156,20 +156,20 @@ def compute_partial_elastic_energy_X_noOrder(x:wp.array(dtype=wp.vec3),hexagons:
         for j in range(3):
             shapeFuncGradNow[j] = shapeFuncGrad[i][whichQuadrature][j]
         temAns = wp.mul(P@wp.transpose(inverse_pX_peps[hex][whichQuadrature]),shapeFuncGradNow)*det_pX_peps[hex][whichQuadrature]
-        wp.atomic_add(grad,hexagons[hex][i],temAns)
+        wp.atomic_sub(grad,hexagons[hex][i],temAns)
 
 @wp.kernel
 def compute_partial_fixed_energy_X(x:wp.array(dtype=wp.vec3f),vertex2index:wp.array(dtype=wp.int32),pin_list:wp.array(dtype=wp.int32),grad:wp.array(dtype=wp.vec3f),fixed_x:wp.array(dtype=wp.vec3f),control_mag:wp.float32):
     id = wp.tid()
     idx = pin_list[id]
     i = vertex2index[idx]
-    grad[i] -= control_mag * (fixed_x[id]-x[idx])
+    grad[i] += control_mag * (fixed_x[id]-x[idx])
 
 @wp.kernel
 def compute_partial_fixed_energy_X_noOrder(x:wp.array(dtype=wp.vec3f),pin_list:wp.array(dtype=wp.int32),grad:wp.array(dtype=wp.vec3f),fixed_x:wp.array(dtype=wp.vec3f),control_mag:wp.float32):
     id = wp.tid()
     idx = pin_list[id]
-    grad[idx] -= control_mag * (fixed_x[id]-x[idx])
+    grad[idx] += control_mag * (fixed_x[id]-x[idx])
 
 
 
@@ -177,12 +177,12 @@ def compute_partial_fixed_energy_X_noOrder(x:wp.array(dtype=wp.vec3f),pin_list:w
 def compute_partial_gravity_energy_X(m:wp.array(dtype=wp.float32),g:wp.array(dtype=wp.float32),grad:wp.array(dtype=wp.vec3),index2vertex:wp.array(dtype=wp.int32)):
     idx = wp.tid()
     id = index2vertex[idx]
-    grad[idx][1] -= m[id]*g[0]
+    grad[idx][1] += m[id]*g[0]
 
 @wp.kernel()
 def compute_partial_gravity_energy_X_noOrder(m:wp.array(dtype=wp.float32),g:wp.array(dtype=wp.float32),grad:wp.array(dtype=wp.vec3)):
     idx = wp.tid()
-    grad[idx][1] -= m[idx]*g[0]
+    grad[idx][1] += m[idx]*g[0]
 
 # @wp.kernel()
 # def pin(x:wp.array(dtype=wp.vec3),pin_pos:wp.array(dtype=wp.vec3),pin_list:wp.array(dtype=wp.int32)):

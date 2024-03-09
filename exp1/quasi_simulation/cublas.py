@@ -22,12 +22,18 @@ def update_x(x:wp.array(dtype=wp.vec3),grad:wp.array(dtype=wp.vec3),dt:wp.float3
 def update_deltaX_kernel(x:wp.array(dtype=wp.vec3),deltaX:wp.array(dtype=wp.vec3),index2vertex:wp.array(dtype=wp.int32)):
     idx = wp.tid()
     i = index2vertex[idx]
-    x[i] =x[i] - deltaX[idx]
+    x[i] =x[i] + deltaX[idx]
 
 @wp.kernel
-def minues_grad(x:wp.array(dtype=wp.vec3),x_res:wp.array(dtype=wp.vec3),grad:wp.array(dtype=wp.vec3),dt:wp.float32):
+def update_deltaX_kernel_ordered(x:wp.array(dtype=wp.vec3),deltaX:wp.array(dtype=wp.vec3),vertex2index:wp.array(dtype=wp.int32)):
     idx = wp.tid()
-    x_res[idx] = x[idx]-grad[idx]*dt
+    i = vertex2index[idx]
+    x[i] =x[i] + deltaX[idx]
+
+@wp.kernel
+def add_grad(x:wp.array(dtype=wp.vec3),x_res:wp.array(dtype=wp.vec3),grad:wp.array(dtype=wp.vec3),dt:wp.float32):
+    idx = wp.tid()
+    x_res[idx] = x[idx]+grad[idx]*dt
 
 @wp.kernel
 def square_sum(x:wp.array(dtype=wp.vec3),res:wp.array(dtype=wp.float32)):
@@ -183,3 +189,15 @@ def updateX(x:wp.array(dtype=wp.vec3f),m:wp.array(dtype=wp.vec3f),v:wp.array(dty
 def cublasSdot(x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),res:wp.array(dtype=wp.float32)):
     idx = wp.tid()
     wp.atomic_add(res,0,wp.dot(x[idx],y[idx]))
+
+@wp.kernel
+def V2I(x:wp.array(dtype=wp.vec3f),x_gpu:wp.array(dtype=wp.vec3f),vertex2index:wp.array(dtype=wp.int32)):
+    idx = wp.tid()
+    i = vertex2index[idx]
+    x[i] = x_gpu[idx]
+
+@wp.kernel
+def I2V(x:wp.array(dtype=wp.vec3f),x_gpu:wp.array(dtype=wp.vec3f),index2vertex:wp.array(dtype=wp.int32)):
+    idx = wp.tid()
+    i = index2vertex[idx]
+    x[i] = x_gpu[idx]
