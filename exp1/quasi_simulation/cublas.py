@@ -156,6 +156,11 @@ def axpy(y:wp.array(dtype=wp.vec3f),x:wp.array(dtype=wp.vec3f),a:wp.float32):
     idx = wp.tid()
     y[idx] = y[idx]+a*x[idx]
 
+@wp.kernel
+def z_axpby(z:wp.array(dtype=wp.vec3f),x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),a:wp.float32,b:float):
+    idx = wp.tid()
+    z[idx] = a*x[idx]+b*y[idx]    
+
 '''
 下面的函数是adam用的
 '''
@@ -201,3 +206,9 @@ def I2V(x:wp.array(dtype=wp.vec3f),x_gpu:wp.array(dtype=wp.vec3f),index2vertex:w
     idx = wp.tid()
     i = index2vertex[idx]
     x[i] = x_gpu[idx]
+
+@wp.kernel
+def Sum_8(res:wp.array(dtype=wp.float32),v:wp.array(dtype=wp.float32,ndim=2)):
+    idx = wp.tid()
+    res[idx] = v[idx,0]+v[idx,1]+v[idx,2]+v[idx,3]+v[idx,4]+v[idx,5]+v[idx,6]+v[idx,7]
+    

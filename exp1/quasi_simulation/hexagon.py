@@ -18,12 +18,12 @@ def prepare_kernal(x:wp.array(dtype=wp.vec3),hexagons:wp.array(dtype=wp.int32,nd
     inverse_pX_peps[hex][whichQuadrature] = wp.inverse(F)
 
 @wp.kernel
-def prepare_mass(vol:float,mass:wp.array(dtype=float),hex:wp.array(dtype=wp.int32,ndim=2)):
+def prepare_mass(vol:wp.array(dtype=wp.float32),mass:wp.array(dtype=wp.float32),hex:wp.array(dtype=wp.int32,ndim=2)):
     idx = wp.tid()
     whichhex = idx//8
     whichpoint = idx%8
     id = hex[whichhex][whichpoint]
-    wp.atomic_add(mass,id,vol)
+    wp.atomic_add(mass,id,vol[whichhex])
 
 @wp.kernel()
 def compute_elastic_energy(x:wp.array(dtype=wp.vec3),hexagons:wp.array(dtype=wp.int32,ndim=2),
