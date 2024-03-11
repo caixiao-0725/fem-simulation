@@ -9,8 +9,8 @@ if __name__ == '__main__':
     #obj.show_layer(1)
     #obj.show_layer(2)
     #obj.NewtonMultigrid(10)
-    #obj.Newton(10000)
-    obj.FAS(1)
+    obj.Newton(10)
+    #obj.FAS(1)
     #obj.show_layer(1)
     #obj.Adam(iterations=5000)
     #obj.gradientDescent(10000,1.0)
@@ -20,5 +20,5 @@ if __name__ == '__main__':
 
 
     #obj.drag()
-    #obj.show()
+    obj.show()
     #obj.show_layer(0)
