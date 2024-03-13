@@ -168,12 +168,18 @@ class Object:
         print('coarse hex build done')
 
         #compute U Matrix  
+        #有hat的是用于计算残差的，没有hat的是用于计算预条件矩阵的  没有order的是不用GS的,有order的是有GS的
         self.Ut = [bsr_zeros(self.dims[i+1],self.dims[i],wp.mat33f,device='cuda:0') for i in range(self.layer-1)]
         self.Us = [bsr_zeros(self.dims[i],self.dims[i+1],wp.mat33f,device='cuda:0') for i in range(self.layer-1)]
-        self.Ut_hat = [bsr_zeros(self.dims[i+1],self.dims[i],wp.mat33f,device='cuda:0') for i in range(self.layer-1)]
-        self.Us_hat = [bsr_zeros(self.dims[i],self.dims[i+1],wp.mat33f,device='cuda:0') for i in range(self.layer-1)]
+
         self.Ut_noOrder = [bsr_zeros(self.dims[i+1],self.dims[i],wp.mat33f,device='cuda:0') for i in range(self.layer-1)]
         self.Us_noOrder = [bsr_zeros(self.dims[i],self.dims[i+1],wp.mat33f,device='cuda:0') for i in range(self.layer-1)]
+
+        self.Ut_hat = [bsr_zeros(self.dims[i+1],self.dims[i],wp.mat33f,device='cuda:0') for i in range(self.layer-1)]
+        self.Us_hat = [bsr_zeros(self.dims[i],self.dims[i+1],wp.mat33f,device='cuda:0') for i in range(self.layer-1)]
+
+        self.Ut_noOrder_hat = [bsr_zeros(self.dims[i+1],self.dims[i],wp.mat33f,device='cuda:0') for i in range(self.layer-1)]
+        self.Us_noOrder_hat = [bsr_zeros(self.dims[i],self.dims[i+1],wp.mat33f,device='cuda:0') for i in range(self.layer-1)]
         
         for layer in range(self.layer-1):
             rowInd = []
@@ -302,12 +308,14 @@ class Object:
             bsr_set_from_triplets(self.Ut[layer],Us_rowInd,Us_colInd,Us_values)
             bsr_set_from_triplets(self.Ut_noOrder[layer],Us_rowInd_noOrder,Us_colInd_noOrder,Us_values)
             bsr_set_from_triplets(self.Ut_hat[layer],Us_rowInd,Us_colInd,Us_hat_values)
+            bsr_set_from_triplets(self.Ut_noOrder_hat[layer],Us_rowInd_noOrder,Us_colInd_noOrder,Us_hat_values)
         
         #Us和Ut这样写是为了和tiantian liu的论文对齐
         for layer in range(self.layer-1):
             self.Us[layer] = bsr_transposed(self.Ut[layer])
             self.Us_noOrder[layer] = bsr_transposed(self.Ut_noOrder[layer])
             self.Us_hat[layer] = bsr_transposed(self.Ut_hat[layer])
+            self.Us_noOrder_hat[layer] = bsr_transposed(self.Ut_noOrder_hat[layer])
         print('U matrix build done')    
                                       
                               
@@ -829,18 +837,64 @@ class Object:
             
             k+=1
 
+    def PerformConjugateGradient_WithInitX(self,layer = 0,iterations = 10,tol = 1e-5):
+        r0 = 0.0
+        r1 = 0.0
+        dot = 0.0
+        alpha = 0.0
+        beta = 0.0
+        neg_alpha = 0.0
+        wp.copy(self.dev_B[layer],self.dev_B_fixed[layer])
+        bsr_mv(self.L[layer],self.dev_delta_x[layer],self.dev_B[layer],alpha=-1.0,beta=1.0)
+        bsr_mv(self.U[layer],self.dev_delta_x[layer],self.dev_B[layer],alpha=-1.0,beta=1.0)
+        bsr_mv(self.D[layer],self.dev_delta_x[layer],self.dev_B[layer],alpha=-1.0,beta=1.0)
+        self.squared_sum.zero_()
+        wp.launch(kernel = square_sum,dim=self.dims[layer],inputs=[self.dev_B[layer],self.squared_sum])
+        r1 = self.squared_sum.numpy()[0]
+        
+        if r1 < EPSILON:
+            return
+        r = r1
+        k = 1
+        while(r1>tol*r and k<=iterations):
+            if k > 1:
+                beta = r1/r0
+                wp.launch(scal,dim=self.dims[layer],inputs=[self.dev_P[layer],beta])
+                wp.launch(axpy,dim=self.dims[layer],inputs=[self.dev_P[layer],self.dev_B[layer],1.0])
+            else :
+                wp.copy(self.dev_P[layer],self.dev_B[layer])
+            self.dev_AP[layer].zero_()
+            bsr_mv(self.L[layer],self.dev_P[layer],self.dev_AP[layer],alpha=1.0,beta=1.0)
+            bsr_mv(self.U[layer],self.dev_P[layer],self.dev_AP[layer],alpha=1.0,beta=1.0)
+            bsr_mv(self.D[layer],self.dev_P[layer],self.dev_AP[layer],alpha=1.0,beta=1.0)
+            self.dot_sum.zero_()
+            wp.launch(kernel = cublasSdot,dim=self.dims[layer],inputs=[self.dev_P[layer],self.dev_AP[layer],self.dot_sum])
+            dot = self.dot_sum.numpy()[0]
+            if dot<1e-10:
+                break
+            alpha = r1/dot
+            neg_alpha = -alpha
+            wp.launch(axpy,dim=self.dims[layer],inputs=[self.dev_delta_x[layer],self.dev_P[layer],alpha])
+            wp.launch(axpy,dim=self.dims[layer],inputs=[self.dev_B[layer],self.dev_AP[layer],neg_alpha])
+            r0 = r1
+            self.squared_sum.zero_()
+            wp.launch(kernel = square_sum,dim=self.dims[layer],inputs=[self.dev_B[layer],self.squared_sum])
+            r1 = self.squared_sum.numpy()[0]
+            
+            k+=1
+
     def downSample(self,layer = 0):
         wp.copy(self.dev_R[layer],self.dev_B_fixed[layer])
         wp.copy(self.dev_x_solved[layer],self.dev_delta_x[layer])
         bsr_mv(self.L[layer],self.dev_delta_x[layer],self.dev_R[layer],alpha=-1.0,beta=1.0)
         bsr_mv(self.U[layer],self.dev_delta_x[layer],self.dev_R[layer],alpha=-1.0,beta=1.0)
         bsr_mv(self.D[layer],self.dev_delta_x[layer],self.dev_R[layer],alpha=-1.0,beta=1.0)
-        bsr_mv(self.Ut[layer],self.dev_R[layer],self.dev_B_fixed[layer+1],alpha=1.0,beta=0.0)
+        bsr_mv(self.Ut_hat[layer],self.dev_R[layer],self.dev_B_fixed[layer+1],alpha=1.0,beta=0.0)
     
     def upSample(self,layer = 1):
         #print(self.dev_delta_x[layer])
         wp.launch(kernel=addVec3,dim=self.dims[layer],inputs=[self.dev_x_solved[layer],self.dev_delta_x[layer]])
-        bsr_mv(self.Us[layer-1],self.dev_x_solved[layer],self.dev_x_solved[layer-1],alpha=1.0,beta=1.0)
+        bsr_mv(self.Us_hat[layer-1],self.dev_x_solved[layer],self.dev_x_solved[layer-1],alpha=1.0,beta=1.0)
         bsr_mv(self.L[layer-1],self.dev_x_solved[layer-1],self.dev_B_fixed[layer-1],alpha=-1.0,beta=1.0)
         bsr_mv(self.D[layer-1],self.dev_x_solved[layer-1],self.dev_B_fixed[layer-1],alpha=-1.0,beta=1.0)
         bsr_mv(self.U[layer-1],self.dev_x_solved[layer-1],self.dev_B_fixed[layer-1],alpha=-1.0,beta=1.0)
@@ -971,13 +1025,15 @@ class Object:
             #wp.launch(kernel=pin,dim=self.N_pin,inputs=[self.x_gpu_layer[0],self.pin_pos_gpu,self.pin_list_gpu])
 
     def VCycle(self,layer):
-        self.PerformGaussSeidel(layer,iterations=1)
+        self.PerformGaussSeidel(layer,iterations=3)
         self.showError(layer)
-        if layer<self.layer-2:
+        if layer<self.layer-1:
             self.downSample(layer)
             self.VCycle(layer+1)
             self.upSample(layer+1)
-        self.PerformGaussSeidel(layer,iterations=1)
+        if layer==self.layer-1:
+            return 0
+        self.PerformGaussSeidel(layer,iterations=3)
         self.showError(layer)
 
 
@@ -989,6 +1045,7 @@ class Object:
             wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.N_hexagons*8,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.dev_vertex2index[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.grad_gpu])
             wp.launch(kernel=compute_partial_gravity_energy_X,dim=self.N_verts,inputs=[self.m_gpu[0],self.g_gpu,self.grad_gpu,self.dev_index2vertex[0]])
             wp.launch(kernel=compute_partial_fixed_energy_X,dim=self.N_pin,inputs=[self.x_gpu_layer[0],self.dev_vertex2index[0],self.pin_list_gpu,self.grad_gpu,self.pin_pos_gpu,self.control_mag])                    
+            #output something for ui
             if step%(iterations/100) == 0:
                 wp.synchronize()
                 print('Step : ',step)
@@ -1002,6 +1059,7 @@ class Object:
                 self.plot_energy.append(self.energy.numpy()[0]) 
             wp.launch(kernel=compute_elastic_hessian,dim=self.N_hexagons*64,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
             wp.launch(kernel=spd_matrix33f,dim=self.MF_nnz,inputs=[self.MF_value_gpu,self.spd_value])
+            #fill matrix
             for i in range(self.layer):
                 if i == 0:
                     bsr_set_from_triplets(self.A[i],self.MF_row_gpu,self.MF_col_gpu,self.MF_value_gpu)
@@ -1009,7 +1067,7 @@ class Object:
                     bsr_set_from_triplets(self.U[i],self.MF_U_row_gpu,self.MF_U_col_gpu,self.MF_value_gpu,value_offset=self.off_u)
                     bsr_set_from_triplets(self.D[i],self.MF_D_row_gpu,self.MF_D_col_gpu,self.MF_value_gpu,value_offset=self.off_d)
                 else:
-                    self.A[i] = bsr_mm(self.Ut[i-1],bsr_mm(self.A[i-1],self.Us[i-1]))
+                    self.A[i] = bsr_mm(self.Ut_hat[i-1],bsr_mm(self.A[i-1],self.Us_hat[i-1]))
                     wp.launch(kernel=spd_matrix33f,dim=self.UtAUs_nnz[i-1],inputs=[self.A[i].values,self.spd_value])
                     wp.launch(kernel = block_values_reorder,dim = self.UtAUs_nnz[i-1],inputs=[self.A[i].values,self.UtAUs_values[i-1],self.UtAUs_block_offset_gpu[i-1]])                    
                     bsr_set_from_triplets(self.L[i],self.UtAUs_L_row_gpu[i-1],self.UtAUs_L_col_gpu[i-1],self.UtAUs_values[i-1],value_offset=self.UtAUs_off_l[i-1])
@@ -1064,40 +1122,82 @@ class Object:
             bsr_set_from_triplets(self.D[0],self.MF_D_row_gpu,self.MF_D_col_gpu,self.MF_value_gpu,value_offset=self.off_d)
             #先在fine 网格上进行GS迭代
             self.PerformGaussSeidel(layer=0,iterations=1)
-            self.showError(layer = 0)
-            #Restrict the current approximation and its fine-grid residual to the coarse grid
+            self.showError(layer = 0)            
             wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.dev_x_solved[0],self.dev_delta_x[0],self.dev_index2vertex[0]])
+            #Restrict the current approximation and its fine-grid residual to the coarse grid
             bsr_mv(self.Ut_noOrder[0],self.dev_x_solved[0],self.dev_x_solved[1],alpha=1.0,beta=0.0)
             #self.x[1] = warp.to_torch(self.dev_x_solved[1]).cpu()
-            self.dev_R[0].zero_()
-            wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.N_hexagons*8,inputs=[self.dev_x_solved[0],self.hexagons_gpu[0],self.dev_vertex2index[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.dev_R[0]])
-            bsr_mv(self.Ut[0],self.dev_R[0],self.dev_R[1],alpha=1.0,beta=0.0)
+            wp.copy(self.dev_R[0],self.dev_B_fixed[0])
+            #wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.N_hexagons*8,inputs=[self.dev_x_solved[0],self.hexagons_gpu[0],self.dev_vertex2index[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.dev_B[0]])
+            #wp.launch(kernel=z_axpby,dim = self.dims[0],inputs = [self.dev_R[0],self.dev_B_fixed[0],self.dev_B[0],-1.0,1.0])
+            bsr_mv(self.L[0],self.dev_delta_x[0],self.dev_R[0],alpha=-1.0,beta=1.0)
+            bsr_mv(self.U[0],self.dev_delta_x[0],self.dev_R[0],alpha=-1.0,beta=1.0)
+            bsr_mv(self.D[0],self.dev_delta_x[0],self.dev_R[0],alpha=-1.0,beta=1.0)
+
+            bsr_mv(self.Ut_hat[0],self.dev_R[0],self.dev_R[1],alpha=1.0,beta=0.0)
             #Solve the coarse-grid problem
+            #wp.launch(kernel=axpby,dim=self.dims[1],inputs=[self.dev_R[1],self.dev_B_fixed[1],1.0,-1.0])
             #wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.hexs[1].shape[0]*8,inputs=[self.dev_x_solved[1],self.hexagons_gpu[1],self.dev_vertex2index[1],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[1],self.inverse_pX_peps_gpu[1],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.dev_B_fixed[1]])
-            #wp.launch(kernel=axpy,dim=self.dims[1],inputs=[self.dev_B_fixed[1],self.dev_R[1],1.0])
-            wp.copy(self.dev_B_fixed[1],self.dev_R[1])
             wp.launch(kernel=compute_elastic_hessian,dim=self.hexs[1].shape[0]*64,inputs=[self.dev_x_solved[1],self.hexagons_gpu[1],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[1],self.inverse_pX_peps_gpu[1],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.UtAUs_values[0],self.hex_update_offset_gpu[1]])
             wp.launch(kernel=spd_matrix33f,dim=self.UtAUs_nnz[0],inputs=[self.UtAUs_values[0],self.spd_value])
             bsr_set_from_triplets(self.L[1],self.UtAUs_L_row_gpu[0],self.UtAUs_L_col_gpu[0],self.UtAUs_values[0],value_offset=self.UtAUs_off_l[0])
             bsr_set_from_triplets(self.U[1],self.UtAUs_U_row_gpu[0],self.UtAUs_U_col_gpu[0],self.UtAUs_values[0],value_offset=self.UtAUs_off_u[0])
             bsr_set_from_triplets(self.D[1],self.UtAUs_D_row_gpu[0],self.UtAUs_D_col_gpu[0],self.UtAUs_values[0],value_offset=self.UtAUs_off_d[0])
-            self.PerformGaussSeidel(layer = 1,iterations=1)
-
+            #设置cg初值
+            wp.launch(kernel= V2I,dim = self.dims[1],inputs = [self.dev_delta_x[1],self.dev_x_solved[1],self.dev_vertex2index[1]])
+            bsr_mv(self.L[1],self.dev_delta_x[1],self.dev_B_fixed[1],alpha=1.0,beta=1.0)
+            bsr_mv(self.U[1],self.dev_delta_x[1],self.dev_B_fixed[1],alpha=1.0,beta=1.0)
+            bsr_mv(self.D[1],self.dev_delta_x[1],self.dev_B_fixed[1],alpha=1.0,beta=1.0)
+            wp.launch(kernel=axpby,dim=self.dims[1],inputs=[self.dev_R[1],self.dev_B_fixed[1],1.0,1.0])
+            #wp.copy(self.dev_delta_x[1],self.dev_x_solved[1])
+            self.PerformConjugateGradient_WithInitX(layer = 1,iterations=10)
             self.showError(layer = 1)
+            wp.launch(kernel= I2V,dim = self.dims[1],inputs = [self.dev_B[1],self.dev_delta_x[1],self.dev_index2vertex[1]])
+            self.x[1] = warp.to_torch(self.dev_B[1]).cpu()
+
             #Compute the coarse-grid approximation to the error
-            # wp.launch(kernel=z_axpby,dim=self.dims[1],inputs=[self.dev_E[1],self.dev_x_solved[1],self.dev_delta_x[1],-1.0,1.0])
-            wp.copy(self.dev_E[1],self.dev_delta_x[1])
+            wp.launch(kernel=z_axpby,dim=self.dims[1],inputs=[self.dev_E[1],self.dev_x_solved[1],self.dev_B[1],-1.0,1.0])
             #Interpolate the error approximation up to the fine grid and correct the current fine-grid approximation
-            bsr_mv(self.Us[0],self.dev_E[1],self.dev_E[0],alpha=1.0,beta=0.0)
-            wp.launch(kernel=update_deltaX_kernel,dim=self.dims[0],inputs=[self.dev_x_solved[0],self.dev_E[0],self.dev_index2vertex[0]])
+            bsr_mv(self.Us_noOrder_hat[0],self.dev_E[1],self.dev_E[0],alpha=1.0,beta=0.0)
+            wp.launch(kernel=axpby,dim=self.dims[0],inputs=[self.dev_E[0],self.dev_x_solved[0],1.0,1.0])
             self.dev_B_fixed[0].zero_()
             wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.N_hexagons*8,inputs=[self.dev_x_solved[0],self.hexagons_gpu[0],self.dev_vertex2index[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.dev_B_fixed[0]])
-            # self.PerformGaussSeidel(layer=0,iterations=1)
-            #self.showError(layer = 0)
             self.norm_max.zero_()
             wp.launch(kernel = Inf_norm,dim=self.dims[0],inputs=[self.dev_B_fixed[0],self.norm_max,self.dev_index2vertex[0],self.pin_gpu])
-            print('before solve Inf_norm : ',self.norm_max.numpy()[0])
-    
+            print('solve Inf_norm : ',self.norm_max.numpy()[0])
+            # self.PerformGaussSeidel(layer=0,iterations=1)
+            #self.showError(layer = 0)
+    def MG_compare(self,iterations = 100):
+        for step in range(1,iterations+1):
+            self.dev_B_fixed[0].zero_()
+            self.MF_value_gpu.zero_()
+            wp.copy(self.dev_x_solved[0],self.x_gpu_layer[0])
+            wp.launch(kernel=compute_elastic_hessian,dim=self.hexs[1].shape[0]*64,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
+            wp.launch(kernel=spd_matrix33f,dim=self.MF_nnz,inputs=[self.MF_value_gpu,self.spd_value])
+            wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.N_hexagons*8,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.dev_vertex2index[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.dev_B_fixed[0]])
+            #bsr_set_from_triplets(self.A[0],self.MF_row_gpu,self.MF_col_gpu,self.MF_value_gpu)
+            for i in range(self.layer):
+                if i == 0:
+                    bsr_set_from_triplets(self.A[i],self.MF_row_gpu,self.MF_col_gpu,self.MF_value_gpu)
+                    bsr_set_from_triplets(self.L[i],self.MF_L_row_gpu,self.MF_L_col_gpu,self.MF_value_gpu,value_offset=self.off_l)
+                    bsr_set_from_triplets(self.U[i],self.MF_U_row_gpu,self.MF_U_col_gpu,self.MF_value_gpu,value_offset=self.off_u)
+                    bsr_set_from_triplets(self.D[i],self.MF_D_row_gpu,self.MF_D_col_gpu,self.MF_value_gpu,value_offset=self.off_d)
+                else:
+                    self.A[i] = bsr_mm(self.Ut_hat[i-1],bsr_mm(self.A[i-1],self.Us_hat[i-1]))
+                    wp.launch(kernel=spd_matrix33f,dim=self.UtAUs_nnz[i-1],inputs=[self.A[i].values,self.spd_value])
+                    wp.launch(kernel = block_values_reorder,dim = self.UtAUs_nnz[i-1],inputs=[self.A[i].values,self.UtAUs_values[i-1],self.UtAUs_block_offset_gpu[i-1]])                    
+                    bsr_set_from_triplets(self.L[i],self.UtAUs_L_row_gpu[i-1],self.UtAUs_L_col_gpu[i-1],self.UtAUs_values[i-1],value_offset=self.UtAUs_off_l[i-1])
+                    bsr_set_from_triplets(self.U[i],self.UtAUs_U_row_gpu[i-1],self.UtAUs_U_col_gpu[i-1],self.UtAUs_values[i-1],value_offset=self.UtAUs_off_u[i-1])
+                    bsr_set_from_triplets(self.D[i],self.UtAUs_D_row_gpu[i-1],self.UtAUs_D_col_gpu[i-1],self.UtAUs_values[i-1],value_offset=self.UtAUs_off_d[i-1])
+
+            self.PerformGaussSeidel(layer=0,iterations=3)
+            self.showError(layer=0)
+
+            self.downSample(layer=0)
+
+            #self.PerformConjugateGradient(layer=1,iterations=5)
+            self.PerformGaussSeidel(layer=1,iterations=3)
+            self.showError(layer=1)
 
 
     def compare(self,iterations = 100):
@@ -1173,6 +1273,7 @@ class Object:
             self.finish()
             wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.x_gpu_layer[0],self.dev_x_solved[0],self.dev_index2vertex[0]])
 
+
         fig, (ax1,ax2) = plt.subplots(2)
         fig.set_figheight(9)
         fig.set_figwidth(13)
@@ -1212,7 +1313,6 @@ class Object:
             wp.launch(kernel=compute_partial_fixed_energy_X,dim=self.N_pin,inputs=[self.x_gpu_layer[0],self.dev_vertex2index[0],self.pin_list_gpu,self.grad_gpu,self.pin_pos_gpu,self.control_mag])
             wp.launch(kernel=compute_elastic_hessian,dim=self.N_hexagons*64,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
             wp.launch(kernel=spd_matrix33f,dim=self.MF_nnz,inputs=[self.MF_value_gpu,self.spd_value])
-            print(self.x_gpu_layer[0].numpy()[732])
             bsr_set_from_triplets(self.L[0],self.MF_L_row_gpu,self.MF_L_col_gpu,self.MF_value_gpu,value_offset=self.off_l)
             bsr_set_from_triplets(self.U[0],self.MF_U_row_gpu,self.MF_U_col_gpu,self.MF_value_gpu,value_offset=self.off_u)
             bsr_set_from_triplets(self.D[0],self.MF_D_row_gpu,self.MF_D_col_gpu,self.MF_value_gpu,value_offset=self.off_d)
@@ -1221,19 +1321,43 @@ class Object:
             self.PerformGaussSeidel(layer=0,iterations=i)
             self.showError(0)
             plt_x.append(i)
-            plt_norm.append(self.norm_max.numpy()[0])
+            plt_norm.append(np.log10(self.norm_max.numpy()[0]))
             #wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.x_gpu_layer[0],self.dev_delta_x[0],self.dev_index2vertex])
 
-        plt.plot(plt_x,plt_norm,linestyle='-', color='blue', label='Line')
+        plt.plot(plt_x,plt_norm,linestyle='-', color='blue', label='GS')
         plt.xlabel('iterations')
         plt.ylabel('norm')
-        plt.show()
 
         plt_x = []
         plt_norm = []
-        wp.copy(self.x_gpu_layer[0],self.x_cpu)
+        
+        for i in range(0,10):
+            wp.copy(self.x_gpu_layer[0],self.x_cpu)
+            wp.copy(self.MF_value_gpu,self.MF_value_fixed_gpu)
+            self.grad_gpu.zero_()
+            wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.N_hexagons*8,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.dev_vertex2index[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.grad_gpu])
+            wp.launch(kernel=compute_partial_fixed_energy_X,dim=self.N_pin,inputs=[self.x_gpu_layer[0],self.dev_vertex2index[0],self.pin_list_gpu,self.grad_gpu,self.pin_pos_gpu,self.control_mag])
+            wp.launch(kernel=compute_elastic_hessian,dim=self.N_hexagons*64,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
+            wp.launch(kernel=spd_matrix33f,dim=self.MF_nnz,inputs=[self.MF_value_gpu,self.spd_value])
+            bsr_set_from_triplets(self.L[0],self.MF_L_row_gpu,self.MF_L_col_gpu,self.MF_value_gpu,value_offset=self.off_l)
+            bsr_set_from_triplets(self.U[0],self.MF_U_row_gpu,self.MF_U_col_gpu,self.MF_value_gpu,value_offset=self.off_u)
+            bsr_set_from_triplets(self.D[0],self.MF_D_row_gpu,self.MF_D_col_gpu,self.MF_value_gpu,value_offset=self.off_d)
+
+            wp.copy(self.dev_B_fixed[0],self.grad_gpu)
+            self.PerformConjugateGradient(layer=0,iterations=i)
+            self.showError(0)
+            plt_x.append(i)
+            plt_norm.append(np.log10(self.norm_max.numpy()[0]))
+            #wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.x_gpu_layer[0],self.dev_delta_x[0],self.dev_index2vertex])
+
+        plt.plot(plt_x,plt_norm,linestyle='-', color='green', label='CG')
+
+        plt_x = []
+        plt_norm = []
+        
         for iter in range(0,10):
             self.grad_gpu.zero_()
+            wp.copy(self.x_gpu_layer[0],self.x_cpu)
             wp.copy(self.MF_value_gpu,self.MF_value_fixed_gpu)
             wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.N_hexagons*8,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.dev_vertex2index[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.grad_gpu])
             wp.launch(kernel=compute_partial_fixed_energy_X,dim=self.N_pin,inputs=[self.x_gpu_layer[0],self.dev_vertex2index[0],self.pin_list_gpu,self.grad_gpu,self.pin_pos_gpu,self.control_mag])                    
@@ -1246,7 +1370,7 @@ class Object:
                         bsr_set_from_triplets(self.U[i],self.MF_U_row_gpu,self.MF_U_col_gpu,self.MF_value_gpu,value_offset=self.off_u)
                         bsr_set_from_triplets(self.D[i],self.MF_D_row_gpu,self.MF_D_col_gpu,self.MF_value_gpu,value_offset=self.off_d)
                 else:
-                        self.A[i] = bsr_mm(self.Ut[i-1],bsr_mm(self.A[i-1],self.Us[i-1]))
+                        self.A[i] = bsr_mm(self.Ut_hat[i-1],bsr_mm(self.A[i-1],self.Us_hat[i-1]))
                         wp.launch(kernel=spd_matrix33f,dim=self.UtAUs_nnz[i-1],inputs=[self.A[i].values,self.spd_value])
                         wp.launch(kernel = block_values_reorder,dim = self.UtAUs_nnz[i-1],inputs=[self.A[i].values,self.UtAUs_values[i-1],self.UtAUs_block_offset_gpu[i-1]])                    
                         bsr_set_from_triplets(self.L[i],self.UtAUs_L_row_gpu[i-1],self.UtAUs_L_col_gpu[i-1],self.UtAUs_values[i-1],value_offset=self.UtAUs_off_l[i-1])
@@ -1258,12 +1382,10 @@ class Object:
                 self.VCycle(0)
             self.finish()
             plt_x.append(iter)
-            plt_norm.append(self.norm_max.numpy()[0])
-        plt.plot(plt_x,plt_norm,linestyle='-', color='blue', label='Line')
-        plt.xlabel('iterations')
-        plt.ylabel('norm')
+            plt_norm.append(np.log10(self.norm_max.numpy()[0]))
+        plt.plot(plt_x,plt_norm,linestyle='-', color='red', label='NewtonMG')
+        plt.legend()
         plt.show()
-        #wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.x_gpu_layer[0],self.dev_x_solved[0],self.dev_index2vertex])
 
     def show_layer(self,layer=0):
         index = np.array([0,4,6,2,1,5,7,3])

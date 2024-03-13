@@ -9,16 +9,16 @@ if __name__ == '__main__':
     #obj.show_layer(1)
     #obj.show_layer(2)
     #obj.NewtonMultigrid(10)
-    obj.Newton(10)
+    #obj.Newton(10)
     #obj.FAS(1)
+    obj.MG_compare(1)
     #obj.show_layer(1)
     #obj.Adam(iterations=5000)
     #obj.gradientDescent(10000,1.0)
     #obj.show()
 
-    #obj.compare(10)
-
+    #obj.compare(1)
 
     #obj.drag()
-    obj.show()
+    #obj.show()
     #obj.show_layer(0)

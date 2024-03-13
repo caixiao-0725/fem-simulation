@@ -157,6 +157,11 @@ def axpy(y:wp.array(dtype=wp.vec3f),x:wp.array(dtype=wp.vec3f),a:wp.float32):
     y[idx] = y[idx]+a*x[idx]
 
 @wp.kernel
+def axpby(x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),a:wp.float32,b:float):
+    idx = wp.tid()
+    y[idx] = b*y[idx]+a*x[idx]
+
+@wp.kernel
 def z_axpby(z:wp.array(dtype=wp.vec3f),x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),a:wp.float32,b:float):
     idx = wp.tid()
     z[idx] = a*x[idx]+b*y[idx]    
