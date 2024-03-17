@@ -225,3 +225,7 @@ def updateNorm(x:wp.array(dtype=wp.vec3f),f:wp.array(dtype=wp.vec3i),norm:wp.arr
     p2 = f[idx][2]
     norm[idx] = wp.cross(x[p1]-x[p0],x[p2]-x[p0])
     
+@wp.kernel
+def updateVelocity(x:wp.array(dtype=wp.vec3f),x_old:wp.array(dtype=wp.vec3f),v:wp.array(dtype=wp.vec3f),inv_t:wp.float32):
+    idx = wp.tid()
+    v[idx] = (x[idx]-x_old[idx])*inv_t
