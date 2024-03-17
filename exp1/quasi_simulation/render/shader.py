@@ -51,3 +51,8 @@ class Shader:
     def setMatrix(self,name,value):
         loc = glGetUniformLocation(self.shader, name)
         glUniformMatrix4fv(loc,1,GL_FALSE,value)
+
+    def setVec3(self,name,value):
+        self.use()
+        loc = glGetUniformLocation(self.shader, name)
+        glUniform3fv(loc,1,GL_FALSE,value)

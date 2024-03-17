@@ -218,12 +218,18 @@ def Sum_8(res:wp.array(dtype=wp.float32),v:wp.array(dtype=wp.float32,ndim=2)):
     res[idx] = v[idx,0]+v[idx,1]+v[idx,2]+v[idx,3]+v[idx,4]+v[idx,5]+v[idx,6]+v[idx,7]
 
 @wp.kernel
-def updateNorm(x:wp.array(dtype=wp.vec3f),f:wp.array(dtype=wp.vec3i),norm:wp.array(dtype=wp.vec3f)):
+def updateFaceNorm(x:wp.array(dtype=wp.vec3f),f:wp.array(dtype=wp.vec3i),norm:wp.array(dtype=wp.vec3f)):
     idx = wp.tid()
     p0 = f[idx][0]
     p1 = f[idx][1]
     p2 = f[idx][2]
-    norm[idx] = wp.cross(x[p1]-x[p0],x[p2]-x[p0])
+    norm[idx] = wp.normalize(wp.cross(x[p1]-x[p0],x[p2]-x[p0]))
+
+@wp.kernel
+def updateVertNorm(x:wp.array(dtype=wp.vec3f),f:wp.array(dtype=wp.vec3i),norm:wp.array(dtype=wp.vec3f)):
+    idx = wp.tid()
+    for i in range(3):
+        wp.atomic_add(x,f[idx][i],norm[idx])
     
 @wp.kernel
 def updateVelocity(x:wp.array(dtype=wp.vec3f),x_old:wp.array(dtype=wp.vec3f),v:wp.array(dtype=wp.vec3f),inv_t:wp.float32):

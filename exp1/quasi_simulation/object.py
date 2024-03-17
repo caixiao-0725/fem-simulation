@@ -3,7 +3,7 @@ import warp as wp
 from sparse import *
 import torch            #warp只能在gpu上运行，所以这里用torch来做一些cpu上的操作再运到warp上
 import numpy as np
-from hexagon import *
+from quai_hexagon import *
 from cublas import *
 from cpu_function import *
 import time
@@ -43,33 +43,41 @@ class Object:
         for i in range(self.N_hexagons):
             for j in range(8):
                 hexagons[i][j] = hex[i][j]
-        #算出表面索引,用于opengl渲染
-        hex_face = [[0,1,3,2],[4,5,7,6],[0,4,5,1],[2,6,7,3],[0,4,6,2],[1,5,7,3]]
+                #算出表面索引,用于opengl渲染
+        hex_face = [[0,2,3,1],[4,5,7,6],[0,1,5,4],[2,6,7,3],[0,4,6,2],[1,3,7,5]]
+        hex_order_face = [[0,1,3,2],[4,5,7,6],[0,4,5,1],[2,6,7,3],[0,4,6,2],[1,5,7,3]]
         face_dict = {}
+        count = 0
         for h in hex:
             for i in range(6):
                 face = [h[hex_face[i][0]],h[hex_face[i][1]],h[hex_face[i][2]],h[hex_face[i][3]]]
                 key = tuple(face)
                 if key not in face_dict:
-                    face_dict[key] = 0
+                    face_dict[key] = 6*count+i
                 else :
-                    face_dict[key] += 1
+                    face_dict[key] = -1
+            count += 1
         
         self.surface_face = []
         for key in face_dict.keys():
-            if face_dict[key] == 0:
-                face = list(key)
-                self.surface_face.append(face[2])
-                self.surface_face.append(face[1])
-                self.surface_face.append(face[3])
-                self.surface_face.append(face[0])
-                self.surface_face.append(face[1])
-                self.surface_face.append(face[3])
+            if face_dict[key] >= 0:
+                i = face_dict[key]%6
+                h = hex[face_dict[key]//6]
+                f0 = h[hex_order_face[i][0]]
+                f1 = h[hex_order_face[i][1]]
+                f2 = h[hex_order_face[i][2]]
+                f3 = h[hex_order_face[i][3]]
+                self.surface_face.append(f0)
+                self.surface_face.append(f1)
+                self.surface_face.append(f2)
+                self.surface_face.append(f0)
+                self.surface_face.append(f2)
+                self.surface_face.append(f3)
         
         self.surface_face = np.array(self.surface_face,dtype=np.int32)
         self.N_face = int(self.surface_face.size/3)
         self.face_gpu = wp.from_numpy(self.surface_face,dtype = wp.vec3i,device='cuda:0')
-        self.normal_gpu = wp.zeros((self.N_face),dtype = wp.vec3f,device='cuda:0')
+        self.face_normal_gpu = wp.zeros((self.N_face),dtype = wp.vec3f,device='cuda:0')
         #申请opengl相关的资源
         self.VAO = glGenVertexArrays(1)
         self.VBO = glGenBuffers(1)
@@ -102,7 +110,7 @@ class Object:
         norm_ptr, size = check_cudart_err(cudart.cudaGraphicsResourceGetMappedPointer(nbo_graphics_ressource))
         check_cudart_err(cudart.cudaGraphicsUnmapResources(1, nbo_graphics_ressource, None))
 
-        self.point_normal = wp.array(ptr=norm_ptr,length=self.N_verts,shape =None,dtype=wp.vec3f,device='cuda:0')
+        self.vert_normal_gpu = wp.array(ptr=norm_ptr,length=self.N_verts,shape =None,dtype=wp.vec3f,device='cuda:0')
 
 
         vertex2index = []
@@ -684,7 +692,7 @@ class Object:
         self.m_gpu = [wp.zeros((self.dims[i]),dtype=wp.float32,requires_grad=False,device='cuda:0') for i in range(self.layer)]
         self.vol = [wp.zeros((self.hexs[i].shape[0]),dtype=wp.float32) for i in range(self.layer)]
         #wp.launch(kernel=prepare_mass,dim = self.N_hexagons*8,inputs=[self.vol[0],self.m_gpu[0],self.hexagons_gpu[0]])
-        self.g_gpu = wp.array([-9.8/2.0],dtype=wp.float32,requires_grad=False,device='cuda:0')
+        self.g_gpu = wp.array([-9.8],dtype=wp.float32,requires_grad=False,device='cuda:0')
 
         self.energy = wp.zeros((1),dtype=wp.float32,requires_grad=False,device='cuda:0')
         self.energy_lineSearch = wp.zeros((1),dtype=wp.float32,requires_grad=False,device='cuda:0')
@@ -711,7 +719,7 @@ class Object:
                 if x[i][1]>= max_value-self.dx-1e-5:
                     pinList.append(i)
         else:
-            x[pinList[0]][1] += 0.05
+            x[pinList[0]][1] += 0.1
             wp.copy(self.x_gpu_layer[0],self.x_cpu)
 
         pin_cpu = torch.zeros((self.N_verts),dtype=torch.int32,requires_grad=False)
@@ -1063,7 +1071,7 @@ class Object:
             wp.launch(kernel=compute_partial_gravity_energy_X,dim=self.N_verts,inputs=[self.m_gpu[0],self.g_gpu,self.grad_gpu,self.dev_index2vertex[0]])
             wp.launch(kernel=compute_partial_fixed_energy_X,dim=self.N_pin,inputs=[self.x_gpu_layer[0],self.dev_vertex2index[0],self.pin_list_gpu,self.grad_gpu,self.pin_pos_gpu,self.control_mag])
             wp.launch(kernel=compute_elastic_hessian,dim=self.N_hexagons*64,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
-            wp.launch(kernel=spd_matrix33f,dim=self.MF_nnz,inputs=[self.MF_value_gpu,self.spd_value])
+            #wp.launch(kernel=spd_matrix33f,dim=self.MF_nnz,inputs=[self.MF_value_gpu,self.spd_value])
             if step%(iterations/100) == 0:
                 wp.synchronize()
                 print('Step : ',step)
@@ -1085,33 +1093,36 @@ class Object:
             self.PerformConjugateGradient(layer=0,iterations=5)
             
 
-            self.showError(0)
+            #self.showError(0)
             wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.x_gpu_layer[0],self.dev_delta_x[0],self.dev_index2vertex[0]])
             #wp.launch(kernel=pin,dim=self.N_pin,inputs=[self.x_gpu_layer[0],self.pin_pos_gpu,self.pin_list_gpu])
     
     def updateNormal(self):
-        wp.launch(kernel = updateNorm,dim = self.N_face,input = [self.x_gpu_layer[0],self.face_gpu,self.normal_gpu])
+        self.vert_normal_gpu.zero_()
+        wp.launch(kernel = updateFaceNorm,dim = self.N_face,inputs = [self.x_gpu_layer[0],self.face_gpu,self.face_normal_gpu])
+        wp.launch(kernel= updateVertNorm,dim = self.N_face,inputs = [self.vert_normal_gpu,self.face_gpu,self.face_normal_gpu])
 
-    def render(self):
-        self.grad_gpu.zero_()
-        wp.copy(self.MF_value_gpu,self.MF_value_fixed_gpu)
-        wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.N_hexagons*8,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.dev_vertex2index[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.grad_gpu])
-        wp.launch(kernel=compute_partial_gravity_energy_X,dim=self.N_verts,inputs=[self.m_gpu[0],self.g_gpu,self.grad_gpu,self.dev_index2vertex[0]])
-        wp.launch(kernel=compute_partial_fixed_energy_X,dim=self.N_pin,inputs=[self.x_gpu_layer[0],self.dev_vertex2index[0],self.pin_list_gpu,self.grad_gpu,self.pin_pos_gpu,self.control_mag])
-        wp.launch(kernel=compute_elastic_hessian,dim=self.N_hexagons*64,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
-        wp.launch(kernel=spd_matrix33f,dim=self.MF_nnz,inputs=[self.MF_value_gpu,self.spd_value])
-        bsr_set_from_triplets(self.L[0],self.MF_L_row_gpu,self.MF_L_col_gpu,self.MF_value_gpu,value_offset=self.off_l)
-        bsr_set_from_triplets(self.U[0],self.MF_U_row_gpu,self.MF_U_col_gpu,self.MF_value_gpu,value_offset=self.off_u)
-        bsr_set_from_triplets(self.D[0],self.MF_D_row_gpu,self.MF_D_col_gpu,self.MF_value_gpu,value_offset=self.off_d)
+    def render(self,pause = False):
+        if not pause:
+            self.grad_gpu.zero_()
+            wp.copy(self.MF_value_gpu,self.MF_value_fixed_gpu)
+            wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.N_hexagons*8,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.dev_vertex2index[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.grad_gpu])
+            wp.launch(kernel=compute_partial_gravity_energy_X,dim=self.N_verts,inputs=[self.m_gpu[0],self.g_gpu,self.grad_gpu,self.dev_index2vertex[0]])
+            wp.launch(kernel=compute_partial_fixed_energy_X,dim=self.N_pin,inputs=[self.x_gpu_layer[0],self.dev_vertex2index[0],self.pin_list_gpu,self.grad_gpu,self.pin_pos_gpu,self.control_mag])
+            wp.launch(kernel=compute_elastic_hessian,dim=self.N_hexagons*64,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
+            wp.launch(kernel=spd_matrix33f,dim=self.MF_nnz,inputs=[self.MF_value_gpu,self.spd_value])
+            bsr_set_from_triplets(self.L[0],self.MF_L_row_gpu,self.MF_L_col_gpu,self.MF_value_gpu,value_offset=self.off_l)
+            bsr_set_from_triplets(self.U[0],self.MF_U_row_gpu,self.MF_U_col_gpu,self.MF_value_gpu,value_offset=self.off_u)
+            bsr_set_from_triplets(self.D[0],self.MF_D_row_gpu,self.MF_D_col_gpu,self.MF_value_gpu,value_offset=self.off_d)
 
-        wp.copy(self.dev_B_fixed[0],self.grad_gpu)
-        #self.PerformJacobi(layer=0,iterations=3)
-        #self.PerformGaussSeidel(layer=0,iterations=1)
-        self.PerformConjugateGradient(layer=0,iterations=5)
-        
-        wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.x_gpu_layer[0],self.dev_delta_x[0],self.dev_index2vertex[0]])            
+            wp.copy(self.dev_B_fixed[0],self.grad_gpu)
+            #self.PerformJacobi(layer=0,iterations=3)
+            #self.PerformGaussSeidel(layer=0,iterations=1)
+            self.PerformConjugateGradient(layer=0,iterations=5)
+            
+            wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.x_gpu_layer[0],self.dev_delta_x[0],self.dev_index2vertex[0]])            
         wp.copy(self.render_x,self.x_gpu_layer[0])
-        #self.updateNormal()
+        self.updateNormal()
         wp.synchronize()
         glDrawElements(GL_TRIANGLES, len(self.surface_face), GL_UNSIGNED_INT, None)
 
@@ -1149,7 +1160,7 @@ class Object:
                 self.plot_InfNorm.append(self.norm_max.numpy()[0]) 
                 self.plot_energy.append(self.energy.numpy()[0]) 
             wp.launch(kernel=compute_elastic_hessian,dim=self.N_hexagons*64,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
-            wp.launch(kernel=spd_matrix33f,dim=self.MF_nnz,inputs=[self.MF_value_gpu,self.spd_value])
+            #wp.launch(kernel=spd_matrix33f,dim=self.MF_nnz,inputs=[self.MF_value_gpu,self.spd_value])
             #fill matrix
             for i in range(self.layer):
                 if i == 0:
@@ -1197,7 +1208,15 @@ class Object:
 
             wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.x_gpu_layer[0],self.dev_x_solved[0],self.dev_index2vertex[0]])
     
-    
+    # def test(self):
+    #     wp.copy(self.dev_x_solved[0],self.x_gpu_layer[0])
+    #     bsr_mv(self.Ut_noOrder[0],self.dev_x_solved[0],self.dev_x_solved[1],alpha=1.0,beta=0.0)
+    #     self.UtAUs_values[0].zero_()
+    #     wp.launch(kernel=compute_elastic_hessian,dim=self.hexs[1].shape[0]*64,inputs=[self.dev_x_solved[0],self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
+    #     wp.launch(kernel=spd_matrix33f,dim=self.MF_nnz,inputs=[self.MF_value_gpu,self.spd_value])
+            
+
+
     # 参考 https://www.math.hkust.edu.hk/~mamu/courses/531/tutorial_with_corrections.pdf   98页的公式
     def FAS(self,iterations = 100):
         wp.copy(self.dev_x_solved[0],self.x_gpu_layer[0])
@@ -1207,7 +1226,7 @@ class Object:
             self.MF_value_gpu.zero_()
             self.UtAUs_values[0].zero_()
             
-            wp.launch(kernel=compute_elastic_hessian,dim=self.hexs[1].shape[0]*64,inputs=[self.dev_x_solved[0],self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
+            wp.launch(kernel=compute_elastic_hessian,dim=self.hexs[0].shape[0]*64,inputs=[self.dev_x_solved[0],self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
             wp.launch(kernel=spd_matrix33f,dim=self.MF_nnz,inputs=[self.MF_value_gpu,self.spd_value])
             wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.N_hexagons*8,inputs=[self.dev_x_solved[0],self.hexagons_gpu[0],self.dev_vertex2index[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.dev_B_fixed[0]])
             #bsr_set_from_triplets(self.A[0],self.MF_row_gpu,self.MF_col_gpu,self.MF_value_gpu)
@@ -1250,17 +1269,17 @@ class Object:
             self.PerformConjugateGradient_WithInitX(layer = 1,iterations=10)
             wp.launch(kernel= I2V,dim = self.dims[1],inputs = [self.dev_B[1],self.dev_delta_x[1],self.dev_index2vertex[1]])
             self.x[1] = warp.to_torch(self.dev_B[1]).cpu()
-            self.show_layer(1)
+            #self.show_layer(1)
             #Compute the coarse-grid approximation to the error
             wp.launch(kernel=z_axpby,dim=self.dims[1],inputs=[self.dev_E[1],self.dev_x_solved[1],self.dev_B[1],-1.0,1.0])
             #Interpolate the error approximation up to the fine grid and correct the current fine-grid approximation
             bsr_mv(self.Us_noOrder_hat[0],self.dev_E[1],self.dev_E[0],alpha=1.0,beta=0.0)
             wp.launch(kernel=axpby,dim=self.dims[0],inputs=[self.dev_E[0],self.dev_x_solved[0],1.0,1.0])
             #self.PerformJacobi(layer=1,iterations=1)
-            # self.showError(layer = 1)
+            self.showError(layer = 1)
             # bsr_mv(self.Us_hat[0],self.dev_delta_x[1],self.dev_delta_x[0],alpha=1.0,beta=0.0)
             # wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.dev_x_solved[0],self.dev_delta_x[0],self.dev_index2vertex[0]])
-            # self.x[0] = warp.to_torch(self.dev_x_solved[0]).cpu()
+            self.x[0] = warp.to_torch(self.dev_x_solved[0]).cpu()
             # self.show_layer(0)
 
 

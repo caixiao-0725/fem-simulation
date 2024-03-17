@@ -3,6 +3,7 @@ import glfw				# 导入GLFW
 from render.shader import Shader
 from render.camera import Camera
 import glm
+import numpy as np
 
 class MOTION():
     NO_MOTION=0
@@ -11,7 +12,7 @@ class MOTION():
     TRANSLATE_MOTION=3
 
 class Window:
-    def __init__(self, width, height, title, bgColor=(0.0, 0.0, 0.0, 1.0)):
+    def __init__(self, width, height, title, bgColor=(1.0, 1.0, 1.0, 0.0)):
         # 初始化GLFW
         if not glfw.init():
             raise RuntimeError("GLFW初始化失败！")
@@ -22,21 +23,26 @@ class Window:
         self.window = glfw.create_window(width, height, title, None, None)
         # 显示窗口
         self.show()
-        self.shader = Shader("assets/shaders/base.vert", "assets/shaders/base.frag")
+        #self.shader = Shader("assets/shaders/base.vert", "assets/shaders/base.frag")
+        self.phongShader = Shader("assets/shaders/phong.vert", "assets/shaders/phong.frag")
+        self.shadowShader = Shader("assets/shaders/shadow.vert", "assets/shaders/shadow.frag")
 
         self.motion_mode = MOTION.NO_MOTION
+        self.pause = True
         self.camera = Camera(glm.vec3(0.0, 0.0, 5.0), glm.vec3(0.0, 0.0, -1.0), glm.vec3(0.0, 1.0, 0.0))
         glfw.set_mouse_button_callback(self.window, self.mouse_click_callback)
         glfw.set_cursor_pos_callback(self.window,self.mouse_move_callback)
 
         self.modelMatrix = glm.mat4(1.0)
         self.projMatrix = glm.perspective(glm.radians(45.0),float(self.width)/float(self.height),0.1,100.0)
+        self.lightPos = glm.vec3(-2.0, 2.0, 0.0)
+        self.phongShader.setVec3("light_position", self.lightPos.to_tuple()) 
         
     def show(self):
         glfw.make_context_current(self.window)
         glfw.set_window_size_limits(self.window, self.width, self.height, self.width, self.height)
         glViewport(0, 0, self.width, self.height)
-        #glEnable(GL_CULL_FACE)
+        glEnable(GL_CULL_FACE)
         glEnable(GL_DEPTH_TEST)
 
     def loop(self, render):	
@@ -45,14 +51,13 @@ class Window:
             glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT)
 
 
-            self.shader.use()
+            self.phongShader.use()
             self.camera.update()
-            self.shader.setMatrix('_modelMatrix',self.modelMatrix.to_tuple())
-            self.shader.setMatrix('_viewMatrix',self.camera.getMatrix().to_tuple())
-            self.shader.setMatrix('_projMatrix',self.projMatrix.to_tuple())
-
-
-            render()	
+            self.phongShader.setMatrix('_modelMatrix',self.modelMatrix.to_tuple())
+            self.phongShader.setMatrix('_viewMatrix',self.camera.getMatrix().to_tuple())
+            self.phongShader.setMatrix('_projMatrix',self.projMatrix.to_tuple())
+            
+            render(self.pause)	
 
             glfw.swap_buffers(self.window)
             glfw.poll_events()
@@ -64,6 +69,8 @@ class Window:
     def ProcessKeyInput(self):
         if glfw.get_key(self.window, glfw.KEY_ESCAPE) == glfw.PRESS:
             glfw.set_window_should_close(self.window, True)
+        if glfw.get_key(self.window, glfw.KEY_SPACE) == glfw.PRESS:
+            self.pause = not self.pause
     
     def mouse_move_callback(self, window, xpos, ypos):
         if self.motion_mode == MOTION.TRANSLATE_MOTION:
