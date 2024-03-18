@@ -1,6 +1,7 @@
 import numpy as np
 import torch
 from cuda import cudart
+import glm
 def calShapeFuncGrad(shapeFuncGrad,help,quadrature):
     for whichShapeFunc in range(8):
         for whichQuadrature in range(8):
@@ -38,3 +39,11 @@ def check_cudart_err(args):
         raise RuntimeError(format_cudart_err(err))
 
     return ret
+
+def Squared_VE_Distance(x0,o,dir):
+    x0 = glm.vec3(x0[0],x0[1],x0[2])
+    a = x0-o
+    b = glm.dot(a,dir)
+    c = b*dir
+    d = a-c
+    return glm.dot(d,d)

@@ -39,27 +39,6 @@ class Camera:
     def move(self, xOffset,yOffset):
         self.position += 0.005*xOffset* glm.normalize(glm.cross(self.front, self.up))
         self.position -= 0.005*yOffset* self.up
-        # if mode == CAMERA_MOVE.MOVE_LEFT:
-        #     self.position -= self.speed * glm.normalize(glm.cross(self.front, self.up))
-        #     return
-        # elif mode == CAMERA_MOVE.MOVE_RIGHT:
-        #     self.position += self.speed * glm.normalize(glm.cross(self.front, self.up))
-        #     return
-        # elif mode == CAMERA_MOVE.MOVE_FRONT:
-        #     self.position += self.speed * self.front
-        #     return
-        # elif mode == CAMERA_MOVE.MOVE_BACK:
-        #     self.position -= self.speed * self.front
-        #     return
-        # elif mode == CAMERA_MOVE.MOVE_UP:
-        #     self.position += self.speed * self.up
-        #     return
-        # elif mode == CAMERA_MOVE.MOVE_DOWN:
-        #     self.position -= self.speed * self.up
-        #     return
-        # elif mode == CAMERA_MOVE.MOVE_InitialPosition:
-        #     self.position = self.initPosition
-        #     return
         
     def yaw(self,xOffset):
         self.yaw += xOffset * self.sensitivity

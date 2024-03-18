@@ -10,6 +10,7 @@ class MOTION():
     ZOOM_MOTION = 1
     ROTATE_MOTION=2
     TRANSLATE_MOTION=3
+    SELECT_MOTION=4
 
 class Window:
     def __init__(self, width, height, title, bgColor=(1.0, 1.0, 1.0, 0.0)):
@@ -45,6 +46,11 @@ class Window:
         glEnable(GL_CULL_FACE)
         glEnable(GL_DEPTH_TEST)
 
+    def setSelect(self, select,move,clear):
+        self.selectFunc = select
+        self.moveFunc = move
+        self.clearSelcetFunc = clear
+
     def loop(self, render):	
         while not glfw.window_should_close(self.window):
             glClearColor(*self.bgColor)
@@ -77,19 +83,39 @@ class Window:
             self.camera.move(self.mouse_x-xpos, self.mouse_y-ypos)
         elif self.motion_mode == MOTION.ZOOM_MOTION:
             self.camera.zoom(ypos-self.mouse_y)
+        elif self.motion_mode == MOTION.SELECT_MOTION:
+            ray_o,ray_dir = self.getRay(xpos, ypos)
+            self.moveFunc(ray_o,ray_dir)
         self.mouse_x = xpos
         self.mouse_y = ypos
 
+    # 获取鼠标射线
+    def getRay(self, x, y):
+        near = glm.vec3(x, self.height-y, 0.0)
+        far = glm.vec3(x, self.height-y, 1.0)
+        near = glm.unProject(near, self.camera.getMatrix(), self.projMatrix, (0, 0, self.width, self.height))
+        far = glm.unProject(far, self.camera.getMatrix(), self.projMatrix, (0, 0, self.width, self.height))
+        return self.camera.position,glm.normalize(far - near)
+
     def mouse_click_callback(self, window, button:int, action:int, mods:int):
         if button == glfw.MOUSE_BUTTON_LEFT and action == glfw.RELEASE:
+            if self.motion_mode == MOTION.SELECT_MOTION:
+                self.clearSelcetFunc()
             self.motion_mode = MOTION.NO_MOTION
         if button == glfw.MOUSE_BUTTON_LEFT and action == glfw.PRESS:
+            xpos, ypos = glfw.get_cursor_pos(window)
             if glfw.get_key(self.window, glfw.KEY_LEFT_CONTROL) == glfw.PRESS:                
                 self.motion_mode = MOTION.TRANSLATE_MOTION
             elif glfw.get_key(self.window, glfw.KEY_LEFT_SHIFT) == glfw.PRESS:
                 self.motion_mode = MOTION.ZOOM_MOTION
             else :
-                self.motion_mode = MOTION.ROTATE_MOTION
-            xpos, ypos = glfw.get_cursor_pos(window)
+                ray_o,ray_dir = self.getRay(xpos, ypos)
+                select_bool= self.selectFunc(ray_o,ray_dir)                
+                if select_bool:
+                    self.motion_mode = MOTION.SELECT_MOTION
+                    self.moveFunc(ray_o,ray_dir)
+                else:
+                    self.motion_mode = MOTION.ROTATE_MOTION
+            
             self.mouse_x = xpos
             self.mouse_y = ypos

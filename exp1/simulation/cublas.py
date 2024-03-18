@@ -235,3 +235,65 @@ def updateVertNorm(x:wp.array(dtype=wp.vec3f),f:wp.array(dtype=wp.vec3i),norm:wp
 def updateVelocity(x:wp.array(dtype=wp.vec3f),x_old:wp.array(dtype=wp.vec3f),v:wp.array(dtype=wp.vec3f),inv_t:wp.float32):
     idx = wp.tid()
     v[idx] = (x[idx]-x_old[idx])*inv_t
+
+@wp.kernel
+def selectKernel(p0:wp.vec3f,dir:wp.vec3f,x:wp.array(dtype=wp.vec3f),face:wp.array(dtype=wp.vec3i),select_num:wp.array(dtype=wp.int32),select_face:wp.array(dtype=wp.int32),select_distance:wp.array(dtype=wp.float32)):
+    idx = wp.tid()
+    f0 = face[idx][0]
+    f1 = face[idx][1]
+    f2 = face[idx][2]
+    x0 = x[f0]
+    x1 = x[f1]
+    x2 = x[f2]
+    e1 = x1-x0
+    e2 = x2-x0
+    s1 = wp.cross(dir,e2)
+    divisor = wp.dot(s1,e1)
+    if divisor == 0:
+        return 
+    tt = p0-x0
+    b1 = wp.dot(tt,s1)
+    if divisor>0 and (b1<0 or b1>divisor) :
+        return
+    if divisor<0 and (b1>0 or b1<divisor):
+        return
+    s2 = wp.cross(tt,e1)
+    b2 = wp.dot(dir,s2)
+    if divisor>0 and (b2<0 or b1+b2>divisor):
+        return
+    if divisor<0 and (b2>0 or b1+b2<divisor):
+        return
+    t = wp.dot(e2,s2)/divisor
+    if t<0:
+        return
+    id = wp.atomic_add(select_num,0,1)
+    select_face[id] = idx
+    select_distance[id] = t
+    return
+
+@wp.kernel
+def Control_Kernel(select_v:int,more_fixed_gpu:wp.array(dtype=wp.int32),x:wp.array(dtype=wp.vec3f)):
+    idx = wp.tid()
+    more_fixed_gpu[idx] =0
+    dist2 = wp.dot(x[idx]-x[select_v],x[idx]-x[select_v])
+    if dist2<0.002:
+        more_fixed_gpu[idx] = 1
+
+@wp.kernel
+def Fixed_Update_Kernel(x:wp.array(dtype=wp.vec3f),fixed_x:wp.array(dtype=wp.vec3f),more_fixed_gpu:wp.array(dtype=wp.int32),pin:wp.array(dtype=wp.int32),dir:wp.vec3f):
+    idx = wp.tid()
+    if more_fixed_gpu[idx] == 1 and pin[idx] == 0:
+        fixed_x[idx] = x[idx] + dir
+
+@wp.kernel
+def Hessian_Diag_Kernel(values:wp.array(dtype=wp.mat33f),offset:wp.int32,vertex2index:wp.array(dtype=wp.int32),more_fixed_gpu:wp.array(dtype=wp.int32),pin:wp.array(dtype=wp.int32),control_mag:float):
+    idx = wp.tid()
+    if more_fixed_gpu[idx] == 1 or pin[idx] == 1:
+        i = vertex2index[idx]  
+        values[offset+i] = control_mag* wp.mat33f(1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0)
+@wp.kernel
+def compute_partial_more_fixed_energy_X(x:wp.array(dtype=wp.vec3f),vertex2index:wp.array(dtype=wp.int32),more_fixed_gpu:wp.array(dtype=wp.int32),grad:wp.array(dtype=wp.vec3f),fixed_x:wp.array(dtype=wp.vec3f),control_mag:float):
+    idx = wp.tid()
+    if more_fixed_gpu[idx] == 1:
+        i = vertex2index[idx]
+        grad[i] += control_mag * (fixed_x[idx]-x[idx])

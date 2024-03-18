@@ -115,6 +115,13 @@ class Object:
 
         self.vert_normal_gpu = wp.array(ptr=norm_ptr,length=self.N_verts,shape =None,dtype=wp.vec3f,device='cuda:0')
 
+        #拾取相关  估计光线最多穿过128个面
+        self.select_num = warp.zeros((1),dtype=wp.int32,device='cuda:0')
+        self.select_faces = warp.zeros((128),dtype=wp.int32,device='cuda:0')
+        self.select_distances = warp.zeros((128),dtype=wp.float32,device='cuda:0')
+        self.select_vertex = -1
+        self.x_numpy = np.zeros((self.N_verts,3),dtype=np.float32)
+        self.target = glm.vec3(0.0,0.0,0.0)
 
         vertex2index = []
         index2vertex = []
@@ -732,6 +739,7 @@ class Object:
         pin_pos = torch.zeros((len(pinList),3),dtype=torch.float32,requires_grad=False)
         pin_list = torch.zeros((len(pinList)),dtype=torch.int32,requires_grad=False)
         self.pin_gpu = wp.from_torch(pin_cpu.to('cuda:0'),dtype=wp.int32)
+        self.more_fixed_gpu = wp.zeros((self.N_verts),dtype=wp.int32,device='cuda:0')
         self.all_pin_pos_gpu = wp.from_torch(x.to('cuda:0'),dtype=wp.vec3f)
 
         self.N_pin = len(pinList)
@@ -1172,7 +1180,7 @@ class Object:
             self.MF_value_gpu.zero_()
             self.UtAUs_values[0].zero_()
             
-            wp.launch(kernel=compute_elastic_hessian,dim=self.hexs[1].shape[0]*64,inputs=[self.dev_x_solved[0],self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
+            wp.launch(kernel=compute_elastic_hessian,dim=self.hexs[0].shape[0]*64,inputs=[self.dev_x_solved[0],self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
             wp.launch(kernel=spd_matrix33f,dim=self.MF_nnz,inputs=[self.MF_value_gpu,self.spd_value])
             wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.N_hexagons*8,inputs=[self.dev_x_solved[0],self.hexagons_gpu[0],self.dev_vertex2index[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.dev_B_fixed[0]])
             #bsr_set_from_triplets(self.A[0],self.MF_row_gpu,self.MF_col_gpu,self.MF_value_gpu)
@@ -1228,19 +1236,79 @@ class Object:
             # self.x[0] = warp.to_torch(self.dev_x_solved[0]).cpu()
             # self.show_layer(0)
 
+    def select(self,o,d):
+        p0 = wp.vec3f(o)
+        dir = wp.vec3f(d)
+        self.select_num.zero_()
+        wp.launch(kernel=selectKernel,dim = self.N_face,inputs=[p0,dir,self.dev_x,self.face_gpu,self.select_num,self.select_faces,self.select_distances])
+        wp.synchronize()
+        num = self.select_num.numpy()[0]
+        if num == 0:
+            return False
+        else:
+            faces = self.select_faces.numpy()
+            distances = self.select_distances.numpy()
+            self.x_numpy = self.dev_x.numpy()
+            idx = -1
+            min_dis = 1e10
+            for i in range(num):
+                if distances[i] < min_dis:
+                    min_dis = distances[i]
+                    idx = faces[i]
+            v0 = self.surface_face[3*idx+0]
+            v1 = self.surface_face[3*idx+1]
+            v2 = self.surface_face[3*idx+2]
+            x0 = self.x_numpy[v0]
+            x1 = self.x_numpy[v1]
+            x2 = self.x_numpy[v2]
+            d0 = Squared_VE_Distance(x0,o,d)
+            d1 = Squared_VE_Distance(x1,o,d)
+            d2 = Squared_VE_Distance(x2,o,d)
+            if d0 < d1 and d0 < d2:
+                self.select_vertex = v0
+            elif d1 < d2:
+                self.select_vertex = v1
+            else:
+                self.select_vertex = v2
+            return True
+        
+    def moveSelect(self,o,d):
+        diff = glm.vec3(self.x_numpy[self.select_vertex])-o
+        dist = glm.dot(diff,d)
+        self.target = o+dist*d
+        wp.launch(kernel= Control_Kernel,dim=self.dims[0],inputs=[self.select_vertex,self.more_fixed_gpu,self.dev_x])
+
+    def clear(self):
+        self.select_vertex = -1
+        self.more_fixed_gpu.zero_()
+
+
     def render(self,pause=False):
         if not pause:
+            dir = wp.vec3f()
+            if(self.select_vertex!=-1):
+                dir = self.target-glm.vec3(self.x_numpy[self.select_vertex])
+                dir_len = glm.length(dir)
+                if dir_len > 0.5:
+                    dir_len = 0.5
+                dir = dir*dir_len
+                dir = wp.vec3f(dir)
+            wp.launch(kernel= Fixed_Update_Kernel,dim = self.dims[0],inputs = [self.dev_x,self.all_pin_pos_gpu,self.more_fixed_gpu,self.pin_gpu,dir])
             wp.copy(self.dev_old_x,self.dev_x)
             wp.launch(Basic_Update_Kernel,dim=self.N_verts,inputs=[self.dev_x,self.dev_v,self.damping,self.dt])
             wp.copy(self.dev_inertia_x,self.dev_x)
-            wp.copy(self.MF_value_gpu,self.MF_value_fixed_gpu)
+
+
+            self.MF_value_gpu.zero_()
+            wp.launch(kernel=Hessian_Diag_Kernel,dim=self.dims[0],inputs=[self.MF_value_gpu,self.off_d,self.dev_vertex2index[0],self.more_fixed_gpu,self.pin_gpu,self.control_mag])
             wp.launch(kernel=compute_elastic_hessian,dim=self.N_hexagons*64,inputs=[self.dev_x,self.hexagons_gpu[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.MF_value_gpu,self.hex_update_offset_gpu[0]])
             
             self.grad_gpu.zero_()
             wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.N_hexagons*8,inputs=[self.dev_x,self.hexagons_gpu[0],self.dev_vertex2index[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.grad_gpu])
             wp.launch(kernel=compute_partial_gravity_energy_X,dim=self.N_verts,inputs=[self.m_gpu[0],self.g_gpu,self.grad_gpu,self.dev_index2vertex[0]])
             wp.launch(kernel=compute_partial_fixed_energy_X,dim=self.N_pin,inputs=[self.dev_x,self.dev_vertex2index[0],self.pin_list_gpu,self.grad_gpu,self.pin_pos_gpu,self.control_mag])
-            wp.launch(kernel = compute_Inertia_Gradient_Kernel,dim = self.N_verts,inputs = [self.grad_gpu,self.dev_x,self.dev_inertia_x,self.dev_vertex2index[0],self.m_gpu[0],self.inv_dt])
+            wp.launch(kernel=compute_partial_more_fixed_energy_X,dim=self.N_verts,inputs=[self.dev_x,self.dev_vertex2index[0],self.more_fixed_gpu,self.grad_gpu,self.all_pin_pos_gpu,self.control_mag])
+            wp.launch(kernel=compute_Inertia_Gradient_Kernel,dim = self.N_verts,inputs = [self.grad_gpu,self.dev_x,self.dev_inertia_x,self.dev_vertex2index[0],self.m_gpu[0],self.inv_dt])
 
             bsr_set_from_triplets(self.L[0],self.MF_L_row_gpu,self.MF_L_col_gpu,self.MF_value_gpu,value_offset=self.off_l)
             bsr_set_from_triplets(self.U[0],self.MF_U_row_gpu,self.MF_U_col_gpu,self.MF_value_gpu,value_offset=self.off_u)
