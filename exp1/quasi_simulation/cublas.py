@@ -230,3 +230,18 @@ def updateVertNorm(x:wp.array(dtype=wp.vec3f),f:wp.array(dtype=wp.vec3i),norm:wp
     idx = wp.tid()
     for i in range(3):
         wp.atomic_add(x,f[idx][i],norm[idx])
+
+@wp.kernel
+def compute_fix_hessian(vertex2index:wp.array(dtype=wp.int32),fix:wp.array(dtype=wp.int32),control_mag:float,offset:int,hessian:wp.array(dtype=wp.mat33f),fix_idx:wp.array(dtype=wp.int32,ndim=2),fix_value:wp.array(dtype=wp.float32,ndim=2)):
+    idx = wp.tid()
+    IM = wp.mat33f(1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0)
+    if fix[idx]==1:
+        for j in range(8):
+            if fix_idx[idx][j] != -1:
+                jdx = fix_idx[idx][j]
+                wp.atomic_add(hessian,offset+vertex2index[jdx],fix_value[idx][j]*fix_value[idx][j]*control_mag*IM)
+
+@wp.kernel
+def print_hessian(hessian:wp.array(dtype=wp.mat33f)):
+    idx = wp.tid()
+    print(hessian[idx])
