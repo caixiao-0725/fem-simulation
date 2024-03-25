@@ -8,6 +8,11 @@ def calShapeFuncGrad(shapeFuncGrad,help,quadrature):
             shapeFuncGrad[whichShapeFunc][whichQuadrature][1]=help[whichShapeFunc][1]*(1+help[whichShapeFunc][0]*quadrature[whichQuadrature][0])*(1+help[whichShapeFunc][2]*quadrature[whichQuadrature][2])*0.125
             shapeFuncGrad[whichShapeFunc][whichQuadrature][2]=help[whichShapeFunc][2]*(1+help[whichShapeFunc][1]*quadrature[whichQuadrature][1])*(1+help[whichShapeFunc][0]*quadrature[whichQuadrature][0])*0.125
 
+def calShapeFuncGradMat(shapeFuncGrad,shapeFuncGradMat):
+    for whichShapeFunc in range(8):
+        for whichQuadrature in range(8):
+            for i in range(3):
+               shapeFuncGradMat[whichShapeFunc][whichQuadrature][i][i]=shapeFuncGrad[whichShapeFunc][whichQuadrature]
 
 def ijk_index(point, origin, spacing):
     return ((point - origin) / spacing+torch.tensor([0.1,0.1,0.1])).int().tolist()

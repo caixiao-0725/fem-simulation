@@ -1695,7 +1695,7 @@ class Object:
             #Solve the coarse-grid problem
             wp.launch(kernel=compute_elastic_hessian,dim=self.hexs[1].shape[0]*64,inputs=[self.dev_x_solved[1],self.hexagons_gpu[1],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[1],self.inverse_pX_peps_gpu[1],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.UtAUs_values[0],self.hex_update_offset_gpu[1]])
             #wp.launch(kernel=spd_matrix33f,dim=self.UtAUs_nnz[0],inputs=[self.UtAUs_values[0],self.spd_value])
-            
+            print(self.UtAUs_values[0])
             wp.launch(kernel=compute_fix_hessian,dim=self.N_verts,inputs=[self.dev_vertex2index[1],self.pin_gpu,self.control_mag,self.UtAUs_off_d[0],self.UtAUs_values[0],self.fix_idx_gpu,self.fix_values_gpu])
             bsr_set_from_triplets(self.L[1],self.UtAUs_L_row_gpu[0],self.UtAUs_L_col_gpu[0],self.UtAUs_values[0],value_offset=self.UtAUs_off_l[0])
             bsr_set_from_triplets(self.U[1],self.UtAUs_U_row_gpu[0],self.UtAUs_U_col_gpu[0],self.UtAUs_values[0],value_offset=self.UtAUs_off_u[0])

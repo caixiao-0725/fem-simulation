@@ -397,6 +397,114 @@ def bsr_set_from_triplets_with_grad(
         dest.values.ptr,
     )
 
+def bsr_set_from_values(
+    dest: BsrMatrix[BlockType[Rows, Cols, Scalar]],
+    rows: "Array[int]",
+    columns: "Array[int]",
+    values: "Array[Union[Scalar, BlockType[Rows, Cols, Scalar]]]",
+    value_offset: int = 0,
+    row_offset: int = 0,
+    col_offset: int = 0,
+    nnz: int = 0,
+):
+    """
+    Fills a BSR matrix with values defined by coordinate-oriented (COO) triplets, discarding existing blocks.
+
+    The first dimension of the three input arrays must match, and determines the number of non-zeros in the constructed matrix.
+
+    Args:
+        dest: Sparse matrix to populate
+        rows: Row index for each non-zero
+        columns: Columns index for each non-zero
+        values: Block values for each non-zero. Must be either a one-dimensional array with data type identical
+          to the `dest` matrix's block type, or a 3d array with data type equal to the `dest` matrix's scalar type.
+    """
+
+    if values.device != columns.device or values.device != rows.device or values.device != dest.values.device:
+        raise ValueError("All arguments must reside on the same device")
+
+    # 改了点库
+    # if values.shape[0] != rows.shape[0] or values.shape[0] != columns.shape[0]:
+    #     raise ValueError("All triplet arrays must have the same length")
+    if nnz == 0:
+        nnz = rows.shape[0]
+    if nnz+row_offset > rows.shape[0]:
+        raise ValueError("rows < nnz + row_offset")
+    
+    if nnz+col_offset > columns.shape[0]:
+        raise ValueError("columns < nnz + col_offset")
+
+    if nnz+value_offset > values.shape[0]:
+        raise ValueError("values < nnz + value_offset")
+    
+
+    # Accept either array1d(dtype) or contiguous array3d(scalar_type) as values
+    if values.ndim == 1:
+        if values.dtype != dest.values.dtype:
+            raise ValueError("Values array type must correspond to that of dest matrix")
+    elif values.ndim == 3:
+        if values.shape[1:] != dest.block_shape:
+            raise ValueError(
+                f"Last two dimensions in values array ({values.shape[1:]}) should correspond to matrix block shape {(dest.block_shape)})"
+            )
+
+        if warp.types.type_scalar_type(values.dtype) != dest.scalar_type:
+            raise ValueError("Scalar type of values array should correspond to that of matrix")
+
+        if not values.is_contiguous:
+            raise ValueError("Multi-dimensional values array should be contiguous")
+    else:
+        raise ValueError("Number of dimension for values array should be 1 or 3")
+
+    if nnz == 0:
+        bsr_set_zero(dest)
+        return
+
+    # Increase dest array sizes if needed
+    _bsr_ensure_fits_with_grad(dest, nnz=nnz)
+
+    device = dest.values.device
+    scalar_type = dest.scalar_type
+    #计算偏移量
+    if scalar_type == wp.float32:
+        byte_size = 4
+    elif scalar_type == wp.float64:
+        byte_size = 8
+
+    ptr_offset = value_offset*byte_size
+    if values.dtype == wp.mat33f:
+        ptr_offset*=9 
+
+    from warp.context import runtime
+
+    if device.is_cpu:
+        if scalar_type == wp.float32:
+            native_func = runtime.core.bsr_matrix_from_triplets_float_host
+        elif scalar_type == wp.float64:
+            native_func = runtime.core.bsr_matrix_from_triplets_double_host
+    else:
+        if scalar_type == wp.float32:
+            native_func = runtime.core.bsr_matrix_from_triplets_float_device
+        elif scalar_type == wp.float64:
+            native_func = runtime.core.bsr_matrix_from_triplets_double_device
+
+    if not native_func:
+        raise NotImplementedError(f"bsr_from_triplets not implemented for scalar type {scalar_type}")
+
+    dest.nnz = native_func(
+        dest.block_shape[0],
+        dest.block_shape[1],
+        dest.nrow,
+        nnz,
+        rows.ptr+4*row_offset,
+        columns.ptr+4*col_offset,
+        values.ptr+ptr_offset,
+        dest.offsets.ptr,
+        dest.columns.ptr,
+        dest.values.ptr,
+    )
+    #dest.values.ptr = values.ptr+ptr_offset
+
 
 def bsr_assign(dest: BsrMatrix[BlockType[Rows, Cols, Scalar]], src: BsrMatrix[BlockType[Rows, Cols, Any]]):
     """Copies the content of the `src` matrix to `dest`, casting the block values if the two matrices use distinct scalar types."""

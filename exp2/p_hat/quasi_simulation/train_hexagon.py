@@ -2,20 +2,16 @@ import warp as wp
 
 
 @wp.kernel()
-def prepare_kernal(x:wp.array(dtype=wp.vec3),hexagons:wp.array(dtype=wp.int32,ndim=2),shapeFuncGrad:wp.array(dtype=wp.float32,ndim=3),
+def prepare_kernal(x:wp.array(dtype=wp.vec3f),hexagons:wp.array(dtype=wp.int32,ndim=2),shapeFuncGrad:wp.array(dtype=wp.vec3f,ndim=2),
+                   F:wp.array(dtype=wp.mat33f),
                     det_pX_peps:wp.array(dtype=wp.float32,ndim=2),inverse_pX_peps:wp.array(dtype=wp.mat33f,ndim=2)):
     idx = wp.tid()
     hex = idx//8
     whichQuadrature = idx%8
-    F = wp.mat33f()
-    for row in range(3):
-        for col in range(3):
-            value_now = 0.0
-            for i in range(8):
-                value_now += x[hexagons[hex][i]][row]*shapeFuncGrad[i][whichQuadrature][col]
-            F[row,col] = value_now
-    det_pX_peps[hex][whichQuadrature] = wp.determinant(F)
-    inverse_pX_peps[hex][whichQuadrature] = wp.inverse(F)
+    for i in range(8):
+        F[idx] += wp.outer(x[hexagons[hex][i]],shapeFuncGrad[i][whichQuadrature])
+    det_pX_peps[hex][whichQuadrature] = wp.determinant(F[idx])
+    inverse_pX_peps[hex][whichQuadrature] = wp.inverse(F[idx])
 
 @wp.kernel
 def prepare_mass(vol:wp.array(dtype=wp.float32),mass:wp.array(dtype=wp.float32),hex:wp.array(dtype=wp.int32,ndim=2)):
@@ -65,34 +61,6 @@ def compute_gravity_energy(x:wp.array(dtype=wp.vec3),m:wp.array(dtype=wp.float32
 
 
 
-
-
-
-@wp.kernel()
-def compute_partial_elastic_energy_X(x:wp.array(dtype=wp.vec3),hexagons:wp.array(dtype=wp.int32,ndim=2),vertex2index:wp.array(dtype=wp.int32),
-                shapeFuncGrad:wp.array(dtype=wp.float32,ndim=3),det_pX_peps:wp.array(dtype=wp.float32,ndim=2),inverse_pX_peps:wp.array(dtype=wp.mat33f,ndim=2),
-                IM:wp.array(dtype=wp.mat33f),LameMu:wp.array(dtype=wp.float32),LameLa:wp.array(dtype=wp.float32),
-                grad:wp.array(dtype=wp.vec3)):
-    idx = wp.tid()
-    whichQuadrature = idx%8
-    hex = idx//8
-    F = wp.mat33f()
-    for row in range(3):
-        for col in range(3):
-            value_now = 0.0
-            for i in range(8):
-                value_now += x[hexagons[hex][i]][row]*shapeFuncGrad[i][whichQuadrature][col]
-            F[row,col] = value_now
-    F = F @ inverse_pX_peps[hex][whichQuadrature]
-    
-    E = 0.5*(wp.transpose(F)@F-IM[0])
-    P = F@(2.0*LameMu[0]*E+LameLa[0]*wp.trace(E)*IM[0])
-    for i in range(8):
-        shapeFuncGradNow = wp.vec3f()
-        for j in range(3):
-            shapeFuncGradNow[j] = shapeFuncGrad[i][whichQuadrature][j]
-        temAns = wp.mul(P@wp.transpose(inverse_pX_peps[hex][whichQuadrature]),shapeFuncGradNow)*det_pX_peps[hex][whichQuadrature]
-        wp.atomic_sub(grad,vertex2index[hexagons[hex][i]],temAns)
 
 @wp.kernel()
 def compute_partial_elastic_energy_X_noOrder(x:wp.array(dtype=wp.vec3),hexagons:wp.array(dtype=wp.int32,ndim=2),

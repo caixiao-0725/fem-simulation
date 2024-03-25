@@ -58,14 +58,12 @@ def Inf_norm(x:wp.array(dtype=wp.vec3),res:wp.array(dtype=wp.float32),index2vert
 #use conjugate gradient to solve Ax=b (A:3x3  b:3x1  x:3x1)
 @wp.func
 def solve3x3(A:wp.mat33f,b:wp.vec3f,x:wp.vec3f):
-    r = wp.vec3f()
-    p = wp.vec3f()
-    Ap = wp.vec3f()
     old_r_norm = 0.0
     r_norm = 0.0
     dot = 0.0
     alpha = 0.0
     beta = 0.0
+    Ap = b
     r = b
     r_norm = wp.dot(r,r)
     if r_norm < 1e-10:
@@ -95,22 +93,13 @@ def solve3x3(A:wp.mat33f,b:wp.vec3f,x:wp.vec3f):
 def jacobi_iteration_offset(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat33f),diag_offset:wp.array(dtype=wp.int32),b:wp.array(dtype=wp.vec3f)):
     idx = wp.tid()
     diag = value[diag_offset[idx]]
-    # if idx == 0:
-    #     print(value[diag_offset[idx]])
-    #     print(b[idx])
-    #     print(x[idx])
-    #     print(wp.mul(wp.inverse(diag),b[idx]))
-    x[idx] = solve3x3(diag,b[idx],x[idx])
-    # if idx == 0:
-    #     print(x[idx])
+    solve3x3(diag,b[idx],x[idx])
 
 @wp.kernel
 def jacobi_iteration(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat33f),b:wp.array(dtype=wp.vec3f),offset:int):
     idx = wp.tid()
     diag = value[idx+offset]
     x[idx] = solve3x3(diag,b[idx],x[idx])
-    # if idx == 0:
-    #      print(diag)
 
 @wp.kernel
 def spd_matrix33f(x:wp.array(dtype=wp.mat33f),value:float):
@@ -155,6 +144,13 @@ def scal_(x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),a:wp.float32):
 def axpy(y:wp.array(dtype=wp.vec3f),x:wp.array(dtype=wp.vec3f),a:wp.float32):
     idx = wp.tid()
     y[idx] = y[idx]+a*x[idx]
+
+@wp.kernel
+def MATaxpy(y:wp.array(dtype=wp.mat33f),x:wp.array(dtype=wp.mat33f),a:wp.float32):
+    idx = wp.tid()
+    y[idx] = y[idx]+a*wp.diag(wp.get_diag(x[idx]))
+    # if x[idx][0][0] != 0:
+    #     print(wp.get_diag(x[idx]))
 
 @wp.kernel
 def axpby(x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),a:wp.float32,b:float):
@@ -249,5 +245,10 @@ def loss_mat(xs: wp.array(dtype=wp.mat33f), l: wp.array(dtype=float)):
 
 @wp.kernel()
 def loss(xs: wp.array(dtype=wp.vec3f), l: wp.array(dtype=float)):
-    tid = wp.tid()
-    wp.atomic_add(l, 0, xs[tid][0] ** 2.0 + xs[tid][1] ** 2.0+ xs[tid][2] ** 2.0)
+    idx = wp.tid()
+    temp_x = xs[idx]
+    temp_max = wp.abs(temp_x[2])
+    for i in range(2):
+        if wp.abs(temp_x[i])>temp_max:
+            temp_max = wp.abs(temp_x[i])
+    wp.atomic_max(l,0,temp_max)
