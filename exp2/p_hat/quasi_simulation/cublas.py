@@ -153,6 +153,11 @@ def MATaxpy(y:wp.array(dtype=wp.mat33f),x:wp.array(dtype=wp.mat33f),a:wp.float32
     #     print(wp.get_diag(x[idx]))
 
 @wp.kernel
+def Valueaxpy(y:wp.array(dtype=wp.float32),x:wp.array(dtype=wp.float32),a:wp.float32):
+    idx = wp.tid()
+    y[idx] = y[idx]+a*x[idx]
+
+@wp.kernel
 def axpby(x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),a:wp.float32,b:float):
     idx = wp.tid()
     y[idx] = b*y[idx]+a*x[idx]
@@ -237,12 +242,25 @@ def compute_fix_hessian(vertex2index:wp.array(dtype=wp.int32),fix:wp.array(dtype
                 jdx = fix_idx[idx][j]
                 wp.atomic_add(hessian,offset+vertex2index[jdx],fix_value[idx][j]*fix_value[idx][j]*control_mag*IM)
 
+@wp.kernel
+def p_hat_init(x:wp.array(dtype=wp.float32),y:wp.array(dtype=wp.mat33f)):
+    idx = wp.tid()
+    x[idx] = y[idx][0][0]
+
+@wp.kernel
+def Kronecker_product(x:wp.array(dtype=wp.float32),I:wp.array(dtype=wp.mat33f),y:wp.array(dtype=wp.mat33f)):
+    idx = wp.tid()
+    y[idx]  = I[0]*x[idx]
 
 @wp.kernel()
-def loss_mat(xs: wp.array(dtype=wp.mat33f), l: wp.array(dtype=float)):
+def loss_mat(xs: wp.array(dtype=wp.mat33f,ndim=2), l: wp.array(dtype=float)):
     tid = wp.tid()
-    wp.atomic_add(l, 0, xs[tid][0][0] ** 2.0 + xs[tid][1][1] ** 2.0+ xs[tid][2][2] ** 2.0)
-
+    wp.atomic_add(l, 0, xs[tid//8][tid%8][0][0] ** 2.0 + xs[tid//8][tid%8][1][1] ** 2.0+ xs[tid//8][tid%8][2][2] ** 2.0)
+    #wp.atomic_add(l, 0, xs[tid][0][0] ** 2.0 + xs[tid][1][1] ** 2.0+ xs[tid][2][2] ** 2.0)
+@wp.kernel()
+def loss_val(xs: wp.array(dtype=wp.float32,ndim=2), l: wp.array(dtype=float)):
+    tid = wp.tid()
+    wp.atomic_add(l, 0, xs[tid//8][tid%8] ** 2.0 )
 @wp.kernel()
 def loss(xs: wp.array(dtype=wp.vec3f), l: wp.array(dtype=float)):
     idx = wp.tid()
@@ -252,3 +270,10 @@ def loss(xs: wp.array(dtype=wp.vec3f), l: wp.array(dtype=float)):
         if wp.abs(temp_x[i])>temp_max:
             temp_max = wp.abs(temp_x[i])
     wp.atomic_max(l,0,temp_max)
+
+@wp.kernel 
+def square_loss(xs: wp.array(dtype=wp.vec3f), l: wp.array(dtype=float)):
+    idx = wp.tid()
+    temp_x = xs[idx]
+    temp_loss = wp.dot(temp_x,temp_x)
+    wp.atomic_add(l,0,temp_loss)

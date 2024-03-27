@@ -8,7 +8,7 @@ if __name__ == '__main__':
     
     win = Window(1920, 1080, "Test")
     
-    pinned = [732] #184  732
+    pinned = [] #184  732
     obj = Object('assets/objs/dragon.obj',0.05,pinned)
 
     #win.loop(obj.render)
@@ -25,8 +25,8 @@ if __name__ == '__main__':
     #obj.Adam(iterations=5000)
     #obj.gradientDescent(10000,1.0)
     #obj.show()
-
-    obj.compare_withoutGravity(10)
+    obj.compare(10000)
+    #obj.compare_withoutGravity(10)
 
     #obj.drag()
     #obj.show()

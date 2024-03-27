@@ -1541,31 +1541,8 @@ class Object:
             self.PerformGaussSeidel(layer=0,iterations=1)
             #self.showError(layer = 0)  
    
-
             wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.x_gpu_layer[0],self.dev_delta_x[0],self.dev_index2vertex[0]])
-            #Restrict the current approximation and its fine-grid residual to the coarse grid
-            bsr_mv(self.Ut_noOrder[0],self.x_gpu_layer[0],self.dev_x_solved[1],alpha=1.0,beta=0.0)
-            #self.x[1] = warp.to_torch(self.dev_x_solved[1]).cpu()
-            wp.copy(self.dev_R[0],self.dev_B_fixed[0])
-            self.dev_R[0].zero_()
-            wp.launch(kernel=compute_partial_elastic_energy_X,dim=self.N_hexagons*8,inputs=[self.x_gpu_layer[0],self.hexagons_gpu[0],self.dev_vertex2index[0],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[0],self.inverse_pX_peps_gpu[0],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.dev_R[0]])
-            wp.launch(kernel=compute_partial_gravity_energy_X,dim=self.N_verts,inputs=[self.m_gpu[0],self.g_gpu,self.dev_R[0],self.dev_index2vertex[0]])
-            wp.launch(kernel=compute_partial_fixed_energy_X,dim=self.N_pin,inputs=[self.x_gpu_layer[0],self.dev_vertex2index[0],self.pin_list_gpu,self.dev_R[0],self.pin_pos_gpu,self.control_mag])                    
-        
-            bsr_mv(self.Ut_hat[0],self.dev_R[0],self.dev_B_fixed[1],alpha=1.0,beta=0.0)
-            #Solve the coarse-grid problem
-            wp.launch(kernel=compute_elastic_hessian,dim=self.hexs[1].shape[0]*64,inputs=[self.dev_x_solved[1],self.hexagons_gpu[1],self.shapeFuncGrad_gpu,self.det_pX_peps_gpu[1],self.inverse_pX_peps_gpu[1],self.IM_gpu,self.LameMu_gpu,self.LameLa_gpu,self.UtAUs_values[0],self.hex_update_offset_gpu[1]])
-            #wp.launch(kernel=spd_matrix33f,dim=self.UtAUs_nnz[0],inputs=[self.UtAUs_values[0],self.spd_value])
-            #wp.launch(kernel=compute_fix_hessian,dim=self.N_verts,inputs=[self.dev_vertex2index[1],self.pin_gpu,self.control_mag,self.UtAUs_off_d[0],self.UtAUs_values[0],self.fix_idx_gpu,self.fix_values_gpu])
-            bsr_set_from_triplets(self.L[1],self.UtAUs_L_row_gpu[0],self.UtAUs_L_col_gpu[0],self.UtAUs_values[0],value_offset=self.UtAUs_off_l[0])
-            bsr_set_from_triplets(self.U[1],self.UtAUs_U_row_gpu[0],self.UtAUs_U_col_gpu[0],self.UtAUs_values[0],value_offset=self.UtAUs_off_u[0])
-            bsr_set_from_triplets(self.D[1],self.UtAUs_D_row_gpu[0],self.UtAUs_D_col_gpu[0],self.UtAUs_values[0],value_offset=self.UtAUs_off_d[0])
-
-            #self.PerformJacobi(layer=1,iterations=1)
-            #self.showError(layer = 1)
-            #bsr_mv(self.Us_hat[0],self.dev_delta_x[1],self.dev_delta_x[0],alpha=1.0,beta=0.0)
-            #wp.launch(kernel=update_deltaX_kernel,dim=self.N_verts,inputs=[self.x_gpu_layer[0],self.dev_delta_x[0],self.dev_index2vertex[0]])
-        
+                    
         wp.copy(self.x_gpu_layer[0],self.x_cpu)
         for step in range(1,iterations+1):
             self.dev_B_fixed[0].zero_()
@@ -1626,8 +1603,8 @@ class Object:
         fig.set_figwidth(13)
 
         # 绘制线图
-        ax1.plot(self.plot_x, self.plot_energy_newton, linestyle='-', color='blue', label='add attachment')
-        ax1.plot(self.plot_x, self.plot_energy_newtonMultigrid, linestyle='-', color='red', label='without')
+        ax1.plot(self.plot_x, self.plot_energy_newton, linestyle='-', color='blue', label='newton')
+        ax1.plot(self.plot_x, self.plot_energy_newtonMultigrid, linestyle='-', color='red', label='fas')
 
         # 添加标题和标签
         ax1.set_title('Energy')
@@ -1635,8 +1612,8 @@ class Object:
         ax1.set_ylabel('energy')
 
         # 绘制线图
-        ax2.plot(self.plot_x, self.plot_InfNorm_newton, linestyle='-', color='blue', label='add attachment')
-        ax2.plot(self.plot_x, self.plot_InfNorm_newtonMultigrid, linestyle='-', color='red', label='without')
+        ax2.plot(self.plot_x, self.plot_InfNorm_newton, linestyle='-', color='blue', label='newton')
+        ax2.plot(self.plot_x, self.plot_InfNorm_newtonMultigrid, linestyle='-', color='red', label='fas')
 
         # 添加标题和标签
         ax2.set_title('InfNorm')
