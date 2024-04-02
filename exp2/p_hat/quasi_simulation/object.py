@@ -36,7 +36,7 @@ class Object:
         self.N_hexagons = len(hex)
         
         print('Num of hexagons : ',self.N_hexagons)
-        
+        print('Num of vertices : ',self.N_verts)
         # simulation components
         x = torch.tensor(self.voxels.points,dtype=torch.float32,requires_grad=False)
         hexagons = torch.zeros((self.N_hexagons,8),dtype=torch.int32,requires_grad=False)
@@ -75,6 +75,12 @@ class Object:
                 self.surface_face.append(f2)
                 self.surface_face.append(f3)
         
+        self.surface_vert = []
+        surface_hash = {}
+        for v in self.surface_face:
+            if v not in surface_hash:
+                surface_hash[v] = 0
+                self.surface_vert.append(v)
         self.surface_face = np.array(self.surface_face,dtype=np.int32)
         self.N_face = int(self.surface_face.size/3)
         self.face_gpu = wp.from_numpy(self.surface_face,dtype = wp.vec3i,device='cuda:0')
@@ -786,7 +792,7 @@ class Object:
                 if x[i][1]>= max_value-self.dx-1e-5:
                     pinList.append(i)
         else:
-            x[pinList[0]][1] += 0.01
+            x[pinList[0]][1] += 0.001
             wp.copy(self.x_gpu_layer[0],self.x_cpu)
 
         pin_cpu = torch.zeros((self.N_verts),dtype=torch.int32,requires_grad=False)
@@ -1211,7 +1217,7 @@ class Object:
         bsr_mv(self.Ut_hat[0],self.dev_R[0],self.dev_B_fixed[1],alpha=1.0,beta=0.0)
 
         tape = wp.Tape()
-
+        #self.Ut_noOrder_value = wp.from_torch(torch.load('assets/p_record/Ut_noOrder_0.pth').to('cuda:0'),requires_grad=True)
 
         for step in range(1,iterations+1):
 
@@ -1228,8 +1234,10 @@ class Object:
             wp_l.zero_()
             #set x0
             wp.copy(self.x_cpu,self.dev_x_init)
-
-            self.x[0][torch.randint(0,self.dims[0])] +=  (torch.rand(3)-0.5)*0.01
+            ri = self.surface_vert[torch.randint(0,len(self.surface_vert),size=(1,))]
+            rand_val = (torch.rand(3)-0.5)*0.0002
+            self.x[0][732] +=  rand_val
+            #print('rand_val : ',rand_val)
             wp.copy(self.x_gpu_layer[0],self.x_cpu)
 
             self.dev_R[0].zero_()
@@ -1256,14 +1264,16 @@ class Object:
             tape.zero()           
             tape.backward(loss=wp_l)  # compute gradients
             wp.launch(kernel=Valueaxpy,dim=self.Ut_noOrder[0].nnz,inputs=[self.Ut_noOrder_value,self.Ut_noOrder_value.grad,1e-4])
-            #grad= wp.to_torch(self.Ut_noOrder_value.grad)
-            #val = wp.to_torch(self.Ut_noOrder_value)
-            #print(grad[5191],val[5191])
-            #for i in range(grad.shape[0]):
-                #if grad[i] !=0:
-                #    print(i)
-                #    print(grad[i],val[i])
-            print(wp_l)
+            # grad= wp.to_torch(self.Ut_noOrder_value.grad)
+            # val = wp.to_torch(self.Ut_noOrder_value)
+            # print(grad[5191],val[5191])
+            # for i in range(grad.shape[0]):
+            #     if grad[i] !=0:
+            #        print(i)
+            #        print(grad[i],val[i])
+            #print(wp_l)
+            if step%(iterations/100) == 0:
+                print(step,'%')
         self.save_p_hat()
         self.x[1] = self.x_gpu_layer[1].numpy()
         self.show_layer(1)

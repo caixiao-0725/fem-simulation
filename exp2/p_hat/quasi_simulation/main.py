@@ -10,7 +10,7 @@ if __name__ == '__main__':
     
     pinned = [732] #184  732
     obj = Object('assets/objs/dragon.obj',0.05,pinned)
-    #obj.train(100)
+    #obj.train(1000)
     obj.compare(5)
 
 

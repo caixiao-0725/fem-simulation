@@ -155,6 +155,14 @@ def MATaxpy(y:wp.array(dtype=wp.mat33f),x:wp.array(dtype=wp.mat33f),a:wp.float32
 @wp.kernel
 def Valueaxpy(y:wp.array(dtype=wp.float32),x:wp.array(dtype=wp.float32),a:wp.float32):
     idx = wp.tid()
+    if wp.abs(a*x[idx]) <1e-6:
+        return
+    if y[idx]+a*x[idx]<0 :
+        y[idx] =0.0
+        return
+    if y[idx]+a*x[idx]>1:
+        y[idx] = 1.0
+        return
     y[idx] = y[idx]+a*x[idx]
 
 @wp.kernel

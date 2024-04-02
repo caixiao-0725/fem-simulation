@@ -11,7 +11,7 @@ if __name__ == '__main__':
     pinned = [] #184  732
     obj = Object('assets/objs/dragon.obj',0.05,pinned)
 
-    #win.loop(obj.render)
+    win.loop(obj.render)
     #obj.show_layer(0)
     #obj.show_layer(1)
     #obj.show_layer(2)
@@ -25,7 +25,7 @@ if __name__ == '__main__':
     #obj.Adam(iterations=5000)
     #obj.gradientDescent(10000,1.0)
     #obj.show()
-    obj.compare(10000)
+    #obj.compare(10000)
     #obj.compare_withoutGravity(10)
 
     #obj.drag()
