@@ -792,7 +792,7 @@ class Object:
                 if x[i][1]>= max_value-self.dx-1e-5:
                     pinList.append(i)
         else:
-            x[pinList[0]][1] += 0.001
+            x[pinList[0]][1] += 0.0
             wp.copy(self.x_gpu_layer[0],self.x_cpu)
 
         pin_cpu = torch.zeros((self.N_verts),dtype=torch.int32,requires_grad=False)
@@ -1200,6 +1200,8 @@ class Object:
         torch.save(temp, 'assets/p/Ut_noOrder_0.pth')
 
     def train(self,iterations = 100):
+        self.alpha = 0.1
+        temp_sum = wp.zeros((self.Ut_noOrder[0].nrow),dtype=wp.float32)
         wp_l = wp.zeros((1),dtype=wp.float32,requires_grad=True)
         self.dev_B_fixed[0].zero_()
         self.dev_B_fixed[1].zero_()
@@ -1217,7 +1219,7 @@ class Object:
         bsr_mv(self.Ut_hat[0],self.dev_R[0],self.dev_B_fixed[1],alpha=1.0,beta=0.0)
 
         tape = wp.Tape()
-        #self.Ut_noOrder_value = wp.from_torch(torch.load('assets/p_record/Ut_noOrder_0.pth').to('cuda:0'),requires_grad=True)
+        self.Ut_noOrder_value = wp.from_torch(torch.load('assets/p/Ut_noOrder_0.pth').to('cuda:0'),requires_grad=True)
 
         for step in range(1,iterations+1):
 
@@ -1231,11 +1233,12 @@ class Object:
             self.dev_delta_x[0].zero_()
             self.dev_delta_x[1].zero_()
             self.dev_x_solved[0].zero_()
+            temp_sum.zero_()
             wp_l.zero_()
             #set x0
             wp.copy(self.x_cpu,self.dev_x_init)
             ri = self.surface_vert[torch.randint(0,len(self.surface_vert),size=(1,))]
-            rand_val = (torch.rand(3)-0.5)*0.0002
+            rand_val = (torch.rand(3)-0.5)*0.002
             self.x[0][732] +=  rand_val
             #print('rand_val : ',rand_val)
             wp.copy(self.x_gpu_layer[0],self.x_cpu)
@@ -1261,19 +1264,23 @@ class Object:
                 #wp.launch(kernel= loss_mat,dim = self.hexs[1].shape[0]*8,inputs=[self.inverse_pX_peps_gpu[1]],outputs=[wp_l])
                 #wp.launch(kernel = loss_val,dim = self.hexs[1].shape[0]*8,inputs=[self.det_pX_peps_gpu[1]],outputs=[wp_l])
                 wp.launch(kernel=loss,dim = self.dims[0],inputs=[self.dev_x_solved[0]],outputs=[wp_l])
+                wp.launch(kernel=loss_norm,dim=self.Ut_noOrder[0].nrow,inputs=[self.Ut_noOrder_value,self.Ut_noOrder[0].offsets,self.alpha,temp_sum],outputs=[wp_l])
+                #print(wp_l.numpy()[0])
             tape.zero()           
             tape.backward(loss=wp_l)  # compute gradients
-            wp.launch(kernel=Valueaxpy,dim=self.Ut_noOrder[0].nnz,inputs=[self.Ut_noOrder_value,self.Ut_noOrder_value.grad,1e-4])
+            wp.launch(kernel=Valueaxpy,dim=self.Ut_noOrder[0].nnz,inputs=[self.Ut_noOrder_value,self.Ut_noOrder_value.grad,1e-3])
+            #归一化
+            #wp.launch(kernel=RowNormalize,dim=self.Ut_noOrder[0].nrow,inputs=[self.Ut_noOrder_value,self.Ut_noOrder[0].offsets])
             # grad= wp.to_torch(self.Ut_noOrder_value.grad)
             # val = wp.to_torch(self.Ut_noOrder_value)
-            # print(grad[5191],val[5191])
+            # # print(grad[5191],val[5191])
             # for i in range(grad.shape[0]):
             #     if grad[i] !=0:
             #        print(i)
             #        print(grad[i],val[i])
-            #print(wp_l)
+            # print(wp_l)
             if step%(iterations/100) == 0:
-                print(step,'%')
+                print(step/(iterations/100),'%')
         self.save_p_hat()
         self.x[1] = self.x_gpu_layer[1].numpy()
         self.show_layer(1)
@@ -1281,6 +1288,12 @@ class Object:
 
     def compare(self,iterations = 100):
         #先用经典的方法
+        ri = self.surface_vert[torch.randint(0,len(self.surface_vert),size=(1,))]
+        print(ri)
+        rand_val = (torch.rand(3)-0.5)*0.002
+        self.x[0][732] +=  rand_val
+        #print('rand_val : ',rand_val)
+        wp.copy(self.x_gpu_layer[0],self.x_cpu)
         for step in range(1,iterations+1):
             self.dev_R[0].zero_()
             self.dev_B_fixed[0].zero_()

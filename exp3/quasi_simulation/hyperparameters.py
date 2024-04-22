@@ -1,0 +1,1 @@
+feat_dim = 4 # feature vector size (per anchor vector)

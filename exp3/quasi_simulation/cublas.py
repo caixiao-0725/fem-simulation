@@ -58,12 +58,14 @@ def Inf_norm(x:wp.array(dtype=wp.vec3),res:wp.array(dtype=wp.float32),index2vert
 #use conjugate gradient to solve Ax=b (A:3x3  b:3x1  x:3x1)
 @wp.func
 def solve3x3(A:wp.mat33f,b:wp.vec3f,x:wp.vec3f):
+    r = wp.vec3f()
+    p = wp.vec3f()
+    Ap = wp.vec3f()
     old_r_norm = 0.0
     r_norm = 0.0
     dot = 0.0
     alpha = 0.0
     beta = 0.0
-    Ap = b
     r = b
     r_norm = wp.dot(r,r)
     if r_norm < 1e-10:
@@ -93,13 +95,22 @@ def solve3x3(A:wp.mat33f,b:wp.vec3f,x:wp.vec3f):
 def jacobi_iteration_offset(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat33f),diag_offset:wp.array(dtype=wp.int32),b:wp.array(dtype=wp.vec3f)):
     idx = wp.tid()
     diag = value[diag_offset[idx]]
-    solve3x3(diag,b[idx],x[idx])
+    # if idx == 0:
+    #     print(value[diag_offset[idx]])
+    #     print(b[idx])
+    #     print(x[idx])
+    #     print(wp.mul(wp.inverse(diag),b[idx]))
+    x[idx] = solve3x3(diag,b[idx],x[idx])
+    # if idx == 0:
+    #     print(x[idx])
 
 @wp.kernel
 def jacobi_iteration(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat33f),b:wp.array(dtype=wp.vec3f),offset:int):
     idx = wp.tid()
     diag = value[idx+offset]
     x[idx] = solve3x3(diag,b[idx],x[idx])
+    # if idx == 0:
+    #      print(diag)
 
 @wp.kernel
 def spd_matrix33f(x:wp.array(dtype=wp.mat33f),value:float):
@@ -143,26 +154,6 @@ def scal_(x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),a:wp.float32):
 @wp.kernel
 def axpy(y:wp.array(dtype=wp.vec3f),x:wp.array(dtype=wp.vec3f),a:wp.float32):
     idx = wp.tid()
-    y[idx] = y[idx]+a*x[idx]
-
-@wp.kernel
-def MATaxpy(y:wp.array(dtype=wp.mat33f),x:wp.array(dtype=wp.mat33f),a:wp.float32):
-    idx = wp.tid()
-    y[idx] = y[idx]+a*wp.diag(wp.get_diag(x[idx]))
-    # if x[idx][0][0] != 0:
-    #     print(wp.get_diag(x[idx]))
-
-@wp.kernel
-def Valueaxpy(y:wp.array(dtype=wp.float32),x:wp.array(dtype=wp.float32),a:wp.float32):
-    idx = wp.tid()
-    # if wp.abs(a*x[idx]) <1e-6:
-    #     return
-    if y[idx]+a*x[idx]<0 :
-        y[idx] =0.0
-        return
-    if y[idx]+a*x[idx]>1:
-        y[idx] = 1.0
-        return
     y[idx] = y[idx]+a*x[idx]
 
 @wp.kernel
@@ -251,60 +242,6 @@ def compute_fix_hessian(vertex2index:wp.array(dtype=wp.int32),fix:wp.array(dtype
                 wp.atomic_add(hessian,offset+vertex2index[jdx],fix_value[idx][j]*fix_value[idx][j]*control_mag*IM)
 
 @wp.kernel
-def p_hat_init(x:wp.array(dtype=wp.float32),y:wp.array(dtype=wp.mat33f)):
+def print_hessian(hessian:wp.array(dtype=wp.mat33f)):
     idx = wp.tid()
-    x[idx] = y[idx][0][0]
-
-@wp.kernel
-def Kronecker_product(x:wp.array(dtype=wp.float32),I:wp.array(dtype=wp.mat33f),y:wp.array(dtype=wp.mat33f)):
-    idx = wp.tid()
-    y[idx]  = I[0]*x[idx]
-
-@wp.kernel()
-def loss_mat(xs: wp.array(dtype=wp.mat33f,ndim=2), l: wp.array(dtype=float)):
-    tid = wp.tid()
-    wp.atomic_add(l, 0, xs[tid//8][tid%8][0][0] ** 2.0 + xs[tid//8][tid%8][1][1] ** 2.0+ xs[tid//8][tid%8][2][2] ** 2.0)
-    #wp.atomic_add(l, 0, xs[tid][0][0] ** 2.0 + xs[tid][1][1] ** 2.0+ xs[tid][2][2] ** 2.0)
-@wp.kernel()
-def loss_val(xs: wp.array(dtype=wp.float32,ndim=2), l: wp.array(dtype=float)):
-    tid = wp.tid()
-    wp.atomic_add(l, 0, xs[tid//8][tid%8] ** 2.0 )
-
-@wp.kernel()
-def loss(xs: wp.array(dtype=wp.vec3f), l: wp.array(dtype=float)):
-    idx = wp.tid()
-    temp_x = xs[idx]
-    temp_max = wp.abs(temp_x[2])
-    for i in range(2):
-        if wp.abs(temp_x[i])>temp_max:
-            temp_max = wp.abs(temp_x[i])
-    wp.atomic_max(l,0,temp_max)
-
-@wp.kernel()
-def loss_norm(x:wp.array(dtype=wp.float32),offsets:wp.array(dtype=wp.int32),alpha:float,temp_sum:wp.array(dtype=float) ,l: wp.array(dtype=float)):
-    idx = wp.tid()
-    id0 = offsets[idx]
-    id1 = offsets[idx+1]
-    for i in range(id0,id1):
-        temp_sum[idx] += x[i]
-    if wp.abs(1.0-temp_sum[idx]) <1e-6:
-        return
-    wp.atomic_add(l,0,-alpha*(1.0-temp_sum[idx])*(1.0-temp_sum[idx]))
-
-@wp.kernel 
-def square_loss(xs: wp.array(dtype=wp.vec3f), l: wp.array(dtype=float)):
-    idx = wp.tid()
-    temp_x = xs[idx]
-    temp_loss = wp.dot(temp_x,temp_x)
-    wp.atomic_add(l,0,temp_loss)
-
-@wp.kernel
-def RowNormalize(x:wp.array(dtype=wp.float32),offsets:wp.array(dtype=wp.int32)):
-    idx = wp.tid()
-    temp_sum = float(0.0)
-    id0 = offsets[idx]
-    id1 = offsets[idx+1]
-    for i in range(id0,id1):
-        temp_sum += x[i]
-    for i in range(id0,id1):
-        x[i] /= temp_sum
+    print(hessian[idx])

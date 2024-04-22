@@ -19,9 +19,11 @@ def update_x(x:wp.array(dtype=wp.vec3),grad:wp.array(dtype=wp.vec3),dt:wp.float3
     x[idx] -= grad[idx]*dt
 
 @wp.kernel
-def update_deltaX_kernel(x:wp.array(dtype=wp.vec3),deltaX:wp.array(dtype=wp.vec3),index2vertex:wp.array(dtype=wp.int32)):
+def update_deltaX_kernel(x:wp.array(dtype=wp.vec3),deltaX:wp.array(dtype=wp.vec3),index2vertex:wp.array(dtype=wp.int32),pin:wp.array(dtype=wp.int32)):
     idx = wp.tid()
     i = index2vertex[idx]
+    if pin[i] == 1:
+        return
     x[i] =x[i] + deltaX[idx]
 
 @wp.kernel
@@ -29,6 +31,23 @@ def update_deltaX_kernel_ordered(x:wp.array(dtype=wp.vec3),deltaX:wp.array(dtype
     idx = wp.tid()
     i = vertex2index[idx]
     x[i] =x[i] + deltaX[idx]
+
+@wp.kernel
+def Basic_Update_Kernel(x:wp.array(dtype=wp.vec3),v:wp.array(dtype=wp.vec3),damping:float,dt:wp.float32,pin:wp.array(dtype=wp.int32)):
+    idx = wp.tid()
+    if pin[idx] == 1:
+        return
+    v[idx] *=damping
+    x[idx] += v[idx]*dt
+
+@wp.kernel
+def Basic_Update_With_Gravity_Kernel(x:wp.array(dtype=wp.vec3),v:wp.array(dtype=wp.vec3),damping:float,g:wp.array(dtype=wp.float32),dt:wp.float32,pin:wp.array(dtype=wp.int32)):
+    idx = wp.tid()
+    if pin[idx] == 1:
+        return
+    v[idx] *=damping
+    v[idx].y += g[0]*dt
+    x[idx] += v[idx]*dt
 
 @wp.kernel
 def add_grad(x:wp.array(dtype=wp.vec3),x_res:wp.array(dtype=wp.vec3),grad:wp.array(dtype=wp.vec3),dt:wp.float32):
@@ -58,12 +77,14 @@ def Inf_norm(x:wp.array(dtype=wp.vec3),res:wp.array(dtype=wp.float32),index2vert
 #use conjugate gradient to solve Ax=b (A:3x3  b:3x1  x:3x1)
 @wp.func
 def solve3x3(A:wp.mat33f,b:wp.vec3f,x:wp.vec3f):
+    r = wp.vec3f()
+    p = wp.vec3f()
+    Ap = wp.vec3f()
     old_r_norm = 0.0
     r_norm = 0.0
     dot = 0.0
     alpha = 0.0
     beta = 0.0
-    Ap = b
     r = b
     r_norm = wp.dot(r,r)
     if r_norm < 1e-10:
@@ -93,13 +114,22 @@ def solve3x3(A:wp.mat33f,b:wp.vec3f,x:wp.vec3f):
 def jacobi_iteration_offset(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat33f),diag_offset:wp.array(dtype=wp.int32),b:wp.array(dtype=wp.vec3f)):
     idx = wp.tid()
     diag = value[diag_offset[idx]]
-    solve3x3(diag,b[idx],x[idx])
+    # if idx == 0:
+    #     print(value[diag_offset[idx]])
+    #     print(b[idx])
+    #     print(x[idx])
+    #     print(wp.mul(wp.inverse(diag),b[idx]))
+    x[idx] = solve3x3(diag,b[idx],x[idx])
+    # if idx == 0:
+    #     print(x[idx])
 
 @wp.kernel
 def jacobi_iteration(x:wp.array(dtype=wp.vec3f),value:wp.array(dtype=wp.mat33f),b:wp.array(dtype=wp.vec3f),offset:int):
     idx = wp.tid()
     diag = value[idx+offset]
     x[idx] = solve3x3(diag,b[idx],x[idx])
+    # if idx == 0:
+    #      print(diag)
 
 @wp.kernel
 def spd_matrix33f(x:wp.array(dtype=wp.mat33f),value:float):
@@ -146,24 +176,11 @@ def axpy(y:wp.array(dtype=wp.vec3f),x:wp.array(dtype=wp.vec3f),a:wp.float32):
     y[idx] = y[idx]+a*x[idx]
 
 @wp.kernel
-def MATaxpy(y:wp.array(dtype=wp.mat33f),x:wp.array(dtype=wp.mat33f),a:wp.float32):
+def axpy_(y:wp.array(dtype=wp.vec3f),x:wp.array(dtype=wp.float32),a:wp.float32,pin:wp.array(dtype=wp.int32)):
     idx = wp.tid()
-    y[idx] = y[idx]+a*wp.diag(wp.get_diag(x[idx]))
-    # if x[idx][0][0] != 0:
-    #     print(wp.get_diag(x[idx]))
-
-@wp.kernel
-def Valueaxpy(y:wp.array(dtype=wp.float32),x:wp.array(dtype=wp.float32),a:wp.float32):
-    idx = wp.tid()
-    # if wp.abs(a*x[idx]) <1e-6:
-    #     return
-    if y[idx]+a*x[idx]<0 :
-        y[idx] =0.0
+    if pin[idx] == 1:
         return
-    if y[idx]+a*x[idx]>1:
-        y[idx] = 1.0
-        return
-    y[idx] = y[idx]+a*x[idx]
+    y[idx][1] = y[idx][1]+a*x[0]
 
 @wp.kernel
 def axpby(x:wp.array(dtype=wp.vec3f),y:wp.array(dtype=wp.vec3f),a:wp.float32,b:float):
@@ -239,72 +256,76 @@ def updateVertNorm(x:wp.array(dtype=wp.vec3f),f:wp.array(dtype=wp.vec3i),norm:wp
     idx = wp.tid()
     for i in range(3):
         wp.atomic_add(x,f[idx][i],norm[idx])
+    
+@wp.kernel
+def updateVelocity(x:wp.array(dtype=wp.vec3f),x_old:wp.array(dtype=wp.vec3f),v:wp.array(dtype=wp.vec3f),inv_t:wp.float32):
+    idx = wp.tid()
+    v[idx] = (x[idx]-x_old[idx])*inv_t
 
 @wp.kernel
-def compute_fix_hessian(vertex2index:wp.array(dtype=wp.int32),fix:wp.array(dtype=wp.int32),control_mag:float,offset:int,hessian:wp.array(dtype=wp.mat33f),fix_idx:wp.array(dtype=wp.int32,ndim=2),fix_value:wp.array(dtype=wp.float32,ndim=2)):
+def selectKernel(p0:wp.vec3f,dir:wp.vec3f,x:wp.array(dtype=wp.vec3f),face:wp.array(dtype=wp.vec3i),select_num:wp.array(dtype=wp.int32),select_face:wp.array(dtype=wp.int32),select_distance:wp.array(dtype=wp.float32)):
     idx = wp.tid()
-    IM = wp.mat33f(1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0)
-    if fix[idx]==1:
-        for j in range(8):
-            if fix_idx[idx][j] != -1:
-                jdx = fix_idx[idx][j]
-                wp.atomic_add(hessian,offset+vertex2index[jdx],fix_value[idx][j]*fix_value[idx][j]*control_mag*IM)
-
-@wp.kernel
-def p_hat_init(x:wp.array(dtype=wp.float32),y:wp.array(dtype=wp.mat33f)):
-    idx = wp.tid()
-    x[idx] = y[idx][0][0]
-
-@wp.kernel
-def Kronecker_product(x:wp.array(dtype=wp.float32),I:wp.array(dtype=wp.mat33f),y:wp.array(dtype=wp.mat33f)):
-    idx = wp.tid()
-    y[idx]  = I[0]*x[idx]
-
-@wp.kernel()
-def loss_mat(xs: wp.array(dtype=wp.mat33f,ndim=2), l: wp.array(dtype=float)):
-    tid = wp.tid()
-    wp.atomic_add(l, 0, xs[tid//8][tid%8][0][0] ** 2.0 + xs[tid//8][tid%8][1][1] ** 2.0+ xs[tid//8][tid%8][2][2] ** 2.0)
-    #wp.atomic_add(l, 0, xs[tid][0][0] ** 2.0 + xs[tid][1][1] ** 2.0+ xs[tid][2][2] ** 2.0)
-@wp.kernel()
-def loss_val(xs: wp.array(dtype=wp.float32,ndim=2), l: wp.array(dtype=float)):
-    tid = wp.tid()
-    wp.atomic_add(l, 0, xs[tid//8][tid%8] ** 2.0 )
-
-@wp.kernel()
-def loss(xs: wp.array(dtype=wp.vec3f), l: wp.array(dtype=float)):
-    idx = wp.tid()
-    temp_x = xs[idx]
-    temp_max = wp.abs(temp_x[2])
-    for i in range(2):
-        if wp.abs(temp_x[i])>temp_max:
-            temp_max = wp.abs(temp_x[i])
-    wp.atomic_max(l,0,temp_max)
-
-@wp.kernel()
-def loss_norm(x:wp.array(dtype=wp.float32),offsets:wp.array(dtype=wp.int32),alpha:float,temp_sum:wp.array(dtype=float) ,l: wp.array(dtype=float)):
-    idx = wp.tid()
-    id0 = offsets[idx]
-    id1 = offsets[idx+1]
-    for i in range(id0,id1):
-        temp_sum[idx] += x[i]
-    if wp.abs(1.0-temp_sum[idx]) <1e-6:
+    f0 = face[idx][0]
+    f1 = face[idx][1]
+    f2 = face[idx][2]
+    x0 = x[f0]
+    x1 = x[f1]
+    x2 = x[f2]
+    e1 = x1-x0
+    e2 = x2-x0
+    s1 = wp.cross(dir,e2)
+    divisor = wp.dot(s1,e1)
+    if divisor == 0:
+        return 
+    tt = p0-x0
+    b1 = wp.dot(tt,s1)
+    if divisor>0 and (b1<0 or b1>divisor) :
         return
-    wp.atomic_add(l,0,-alpha*(1.0-temp_sum[idx])*(1.0-temp_sum[idx]))
-
-@wp.kernel 
-def square_loss(xs: wp.array(dtype=wp.vec3f), l: wp.array(dtype=float)):
-    idx = wp.tid()
-    temp_x = xs[idx]
-    temp_loss = wp.dot(temp_x,temp_x)
-    wp.atomic_add(l,0,temp_loss)
+    if divisor<0 and (b1>0 or b1<divisor):
+        return
+    s2 = wp.cross(tt,e1)
+    b2 = wp.dot(dir,s2)
+    if divisor>0 and (b2<0 or b1+b2>divisor):
+        return
+    if divisor<0 and (b2>0 or b1+b2<divisor):
+        return
+    t = wp.dot(e2,s2)/divisor
+    if t<0:
+        return
+    id = wp.atomic_add(select_num,0,1)
+    select_face[id] = idx
+    select_distance[id] = t
+    return
 
 @wp.kernel
-def RowNormalize(x:wp.array(dtype=wp.float32),offsets:wp.array(dtype=wp.int32)):
+def Control_Kernel(select_v:int,more_fixed_gpu:wp.array(dtype=wp.int32),x:wp.array(dtype=wp.vec3f)):
     idx = wp.tid()
-    temp_sum = float(0.0)
-    id0 = offsets[idx]
-    id1 = offsets[idx+1]
-    for i in range(id0,id1):
-        temp_sum += x[i]
-    for i in range(id0,id1):
-        x[i] /= temp_sum
+    more_fixed_gpu[idx] =0
+    dist2 = wp.dot(x[idx]-x[select_v],x[idx]-x[select_v])
+    if dist2<0.002:
+        more_fixed_gpu[idx] = 1
+
+@wp.kernel
+def Fixed_Update_Kernel(x:wp.array(dtype=wp.vec3f),fixed_x:wp.array(dtype=wp.vec3f),more_fixed_gpu:wp.array(dtype=wp.int32),pin:wp.array(dtype=wp.int32),dir:wp.vec3f):
+    idx = wp.tid()
+    if more_fixed_gpu[idx] == 1 and pin[idx] == 0:
+        fixed_x[idx] = x[idx] + dir
+
+@wp.kernel
+def Hessian_Diag_Kernel(values:wp.array(dtype=wp.mat33f),offset:wp.int32,vertex2index:wp.array(dtype=wp.int32),more_fixed_gpu:wp.array(dtype=wp.int32),pin:wp.array(dtype=wp.int32),control_mag:float):
+    idx = wp.tid()
+    if more_fixed_gpu[idx] == 1 or pin[idx] == 1:
+        i = vertex2index[idx]  
+        values[offset+i] = control_mag* wp.mat33f(1.0,0.0,0.0,0.0,1.0,0.0,0.0,0.0,1.0)
+@wp.kernel
+def compute_partial_more_fixed_energy_X(x:wp.array(dtype=wp.vec3f),vertex2index:wp.array(dtype=wp.int32),more_fixed_gpu:wp.array(dtype=wp.int32),grad:wp.array(dtype=wp.vec3f),fixed_x:wp.array(dtype=wp.vec3f),control_mag:float):
+    idx = wp.tid()
+    if more_fixed_gpu[idx] == 1:
+        i = vertex2index[idx]
+        grad[i] += control_mag * (fixed_x[idx]-x[idx])
+
+@wp.kernel
+def Hessian_Mass_Kernel(m:wp.array(dtype=wp.float32),Hessian:wp.array(dtype=wp.mat33f),offset:int,vert2index:wp.array(dtype=wp.int32),IM:wp.array(dtype=wp.mat33f),inv_t:float):
+    idx = wp.tid()
+    id = vert2index[idx]
+    Hessian[offset+id] += m[idx]*IM[0]*inv_t*inv_t #
