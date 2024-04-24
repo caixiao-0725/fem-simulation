@@ -11,11 +11,11 @@ if __name__ == '__main__':
     pinned = [] #184  732
     obj = Object('assets/objs/dragon.obj',0.05,pinned)
 
-    win.loop(obj.render)
+    #win.loop(obj.render)
     #obj.show_layer(0)
     #obj.show_layer(1)
     #obj.show_layer(2)
-    #obj.NewtonMultigrid(1000)
+    obj.NewtonMultigrid(1000)
     #obj.Newton(10000)
     #obj.FASv0(10)
     #obj.FASv1(10)

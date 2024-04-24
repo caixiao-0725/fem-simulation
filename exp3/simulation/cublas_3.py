@@ -22,8 +22,8 @@ def update_x(x:wp.array(dtype=wp.vec3),grad:wp.array(dtype=wp.vec3),dt:wp.float3
 def update_deltaX_kernel(x:wp.array(dtype=wp.vec3),deltaX:wp.array(dtype=wp.vec3),index2vertex:wp.array(dtype=wp.int32),pin:wp.array(dtype=wp.int32)):
     idx = wp.tid()
     i = index2vertex[idx]
-    if pin[i] == 1:
-        return
+    # if pin[i] == 1:
+    #     return
     x[i] =x[i] + deltaX[idx]
 
 @wp.kernel
@@ -35,8 +35,8 @@ def update_deltaX_kernel_ordered(x:wp.array(dtype=wp.vec3),deltaX:wp.array(dtype
 @wp.kernel
 def Basic_Update_Kernel(x:wp.array(dtype=wp.vec3),v:wp.array(dtype=wp.vec3),damping:float,dt:wp.float32,pin:wp.array(dtype=wp.int32)):
     idx = wp.tid()
-    if pin[idx] == 1:
-        return
+    # if pin[idx] == 1:
+    #     return
     v[idx] *=damping
     x[idx] += v[idx]*dt
 

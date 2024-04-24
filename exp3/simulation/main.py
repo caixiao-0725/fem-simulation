@@ -14,6 +14,7 @@ if __name__ == '__main__':
 
     win.setSelect(obj.select,obj.moveSelect,obj.clear)
     #win.loop(obj.render)
+    win.loop(obj.test_render)
     #obj.train()
-    obj.train_muti_level()
+    #obj.train_muti_level()
     #obj.test()

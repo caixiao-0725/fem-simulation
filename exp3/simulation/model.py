@@ -19,8 +19,8 @@ class Encoder(torch.nn.Module):
     def forward(self, x, edge_index):
         x = self.conv1(x, edge_index)
         x = x.relu()
-        # x = self.conv2(x, edge_index)
-        # x = x.relu()
+        x = self.conv2(x, edge_index)
+        x = x.relu()
         x = self.lin(x)
         return x
 
