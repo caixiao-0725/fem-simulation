@@ -1,5 +1,6 @@
 # fem-simulation
 finite element method simulation.
+腾讯动画仿真方向课题12：AI加速的物理模拟算法
 
 处理的网格问题如下
 
